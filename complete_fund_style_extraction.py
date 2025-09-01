@@ -68,11 +68,19 @@ def extract_fund_style_factors(fund_codes, fund_names=None):
     # 首先尝试加载缓存数据
     cached_data = load_cached_data()
     if cached_data:
-        # 移除元数据部分再返回
-        cached_data_copy = cached_data.copy()
-        if '_metadata' in cached_data_copy:
-            del cached_data_copy['_metadata']
-        return cached_data_copy
+        # 检查缓存中是否包含请求的基金代码
+        funds_in_cache = {code: cached_data.get(code) for code in fund_codes if code in cached_data}
+        # 如果所有请求的基金都在缓存中，则直接返回这些基金的数据
+        if len(funds_in_cache) == len(fund_codes):
+            print("所有请求的基金数据都已在缓存中，直接返回缓存数据")
+            # 移除元数据部分再返回
+            result = funds_in_cache.copy()
+            return result
+        elif len(funds_in_cache) > 0:
+            print(f"部分基金数据已在缓存中 ({len(funds_in_cache)}/{len(fund_codes)})")
+            # 可以选择只处理未缓存的基金，但当前实现将重新获取所有数据
+        else:
+            print("缓存中没有请求的基金数据")
     
     # 设置Chrome选项
     chrome_options = Options()
@@ -105,10 +113,8 @@ def extract_fund_style_factors(fund_codes, fund_names=None):
                 url = f"https://app.jiucaishuo.com/pagesA/gz/details?gu_code={fund_code}"
                 print(f"正在访问: {url}")
                 driver.get(url)
-                
                 # 等待页面加载
                 time.sleep(3)
-                
                 # 点击"资产配置"按钮
                 try:
                     # 等待并点击资产配置tab
@@ -238,7 +244,7 @@ def extract_fund_style_factors(fund_codes, fund_names=None):
         
         with open('fund_style_factors.json', 'w', encoding='utf-8') as f:
             json.dump(all_funds_data, f, ensure_ascii=False, indent=2)
-        
+
         return all_funds_data
         
     except Exception as e:
@@ -252,8 +258,8 @@ def extract_fund_style_factors(fund_codes, fund_names=None):
 if __name__ == "__main__":
     # 示例基金代码列表
     # fund_codes = ["510300","512510","516300","563300","159907"]  # 可以根据需要添加更多基金代码
-    funds = [{"code": "510300", "name": "华泰博瑞沪深300ETF"}, {"code": "512510", "name": "华泰柏瑞中证500ETF"},
-             {"code": "516300", "name": "国泰柏瑞中证1000ETF"}, {"code": "563300", "name": "国泰柏瑞中证2000ETF"}, {"code": "159907", "name": "广发国证2000ETF"}]
+    funds = [{"code": "510300", "name": "沪深300"}, {"code": "512510", "name": "中证500"},
+             {"code": "516300", "name": "中证1000"}, {"code": "563300", "name": "中证2000"}, {"code": "159907", "name": "国证2000"}]
     fund_codes = [fund["code"] for fund in funds]
     fund_names = [fund["name"] for fund in funds]
     data = extract_fund_style_factors(fund_codes, fund_names)
