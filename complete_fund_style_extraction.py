@@ -27,16 +27,16 @@ def is_today(date_str):
     except ValueError:
         return False
 
-def load_cached_data():
+def load_cached_data(fund_data_file_path):
     """
     加载缓存的数据
     
     Returns:
         dict: 缓存的数据，如果不存在或不是今天的则返回None
     """
-    if os.path.exists('fund_style_factors.json'):
+    if os.path.exists(fund_data_file_path):
         try:
-            with open('fund_style_factors.json', 'r', encoding='utf-8') as f:
+            with open(fund_data_file_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
             # 检查是否有更新时间且是今天
@@ -54,19 +54,20 @@ def load_cached_data():
     
     return None
 
-def extract_fund_style_factors(fund_codes, fund_names=None):
+def extract_fund_style_factors(fund_codes, fund_names=None,fund_data_file_path=None):
     """
     提取多只基金的风格因子数据
     
     Args:
         fund_codes (list): 基金代码列表
         fund_names (list, optional): 基金名称列表
+        fund_data_file_path (str, optional): 基金数据文件路径
     
     Returns:
         dict: 包含所有基金风格因子数据的字典
     """
     # 首先尝试加载缓存数据
-    cached_data = load_cached_data()
+    cached_data = load_cached_data(fund_data_file_path)
     if cached_data:
         # 检查缓存中是否包含请求的基金代码
         funds_in_cache = {code: cached_data.get(code) for code in fund_codes if code in cached_data}
@@ -88,16 +89,13 @@ def extract_fund_style_factors(fund_codes, fund_names=None):
     chrome_options.add_argument("--disable-dev-shm-usage")
     
     # 不使用无头模式，方便查看页面
-    # chrome_options.add_argument("--headless")
-    
+    chrome_options.add_argument("--headless")
     # 存储所有基金的数据
     all_funds_data = {}
-    
     try:
         # 初始化WebDriver
         driver = webdriver.Chrome(options=chrome_options)
         driver.maximize_window()
-        
         # 遍历每只基金代码
         for i, fund_code in enumerate(fund_codes):
             try:
@@ -138,21 +136,16 @@ def extract_fund_style_factors(fund_codes, fund_names=None):
                     time.sleep(3)
                 except Exception as e:
                     print(f"基金 {fund_code}: 点击'持股风格'标签时出错: {e}")
-                
                 # 获取页面源码
                 page_source = driver.page_source
-                
                 # 保存完整的页面源码以供进一步分析（仅对最后一只基金保存）
                 if fund_code == fund_codes[-1]:
                     with open('fund_full_page.html', 'w', encoding='utf-8') as f:
                         f.write(page_source)
-                
                 # 定义正则表达式模式来提取数据
                 pattern = r'<p data-v-101724a4="" class="item">(.*?)<span data-v-101724a4="" class="s1 jq_hm_font"[^>]*>(.*?)</span>/<span data-v-101724a4="" class="s2 jq_hm_font"[^>]*>(.*?)</span></p>'
-                
                 # 查找所有匹配项
                 matches = re.findall(pattern, page_source)
-                
                 # 提取数据
                 style_factors = {}
                 for match in matches:
@@ -241,8 +234,7 @@ def extract_fund_style_factors(fund_codes, fund_names=None):
             'update_time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             'fund_count': len(fund_codes)
         }
-        
-        with open('fund_style_factors.json', 'w', encoding='utf-8') as f:
+        with open(fund_data_file_path, 'w', encoding='utf-8') as f:
             json.dump(all_funds_data, f, ensure_ascii=False, indent=2)
 
         return all_funds_data
@@ -254,6 +246,80 @@ def extract_fund_style_factors(fund_codes, fund_names=None):
         # 关闭浏览器
         if 'driver' in locals():
             driver.quit()
+
+def find_similar_index(fund_data_file_path='fund_data.json', index_data_file_path='fund_style_factors.json'):
+    """
+    比较基金风格因子和指数风格因子，找出最接近的指数
+    
+    Args:
+        fund_data_file_path (str): 基金数据文件路径
+        index_data_file_path (str): 指数数据文件路径
+    
+    Returns:
+        dict: 包含每个基金最接近指数信息的字典
+    """
+    # 读取基金数据
+    with open(fund_data_file_path, 'r', encoding='utf-8') as f:
+        fund_data = json.load(f)
+    
+    # 读取指数数据
+    with open(index_data_file_path, 'r', encoding='utf-8') as f:
+        index_data = json.load(f)
+    
+    # 移除元数据
+    fund_data.pop('_metadata', None)
+    index_data.pop('_metadata', None)
+    
+    # 创建结果字典
+    result = {}
+    
+    # 为每个基金计算最接近的指数
+    for fund_code, fund_info in fund_data.items():
+        fund_name = fund_info.get("基金名称", f"基金({fund_code})")
+        fund_style_factors = fund_info.get("风格因子", {})
+        
+        # 复制基金信息到结果中
+        result[fund_code] = {
+            "基金名称": fund_name,
+            "风格因子": {}
+        }
+        
+        # 为每个风格因子找到最接近的指数
+        min_differences = {}  # 存储每个风格因子与各指数的差异
+        
+        # 初始化最小差异和最接近的指数
+        for factor_name in fund_style_factors.keys():
+            min_differences[factor_name] = {}
+            for index_code, index_info in index_data.items():
+                index_name = index_info.get("基金名称", f"指数({index_code})")
+                index_style_factors = index_info.get("风格因子", {})
+                
+                if factor_name in index_style_factors:
+                    fund_factor_value = fund_style_factors[factor_name]["基金值"]
+                    index_factor_value = index_style_factors[factor_name]["基金值"]
+                    
+                    # 计算差异（绝对值）
+                    difference = abs(fund_factor_value - index_factor_value)
+                    min_differences[factor_name][index_code] = {
+                        "指数名称": index_name,
+                        "差异值": difference
+                    }
+        
+        # 为每个风格因子找到差异最小的指数
+        for factor_name, differences in min_differences.items():
+            if differences:  # 确保有数据
+                # 找到差异最小的指数
+                closest_index_code = min(differences, key=lambda x: differences[x]["差异值"])
+                closest_index_name = differences[closest_index_code]["指数名称"]
+                
+                # 构建风格因子信息
+                result[fund_code]["风格因子"][factor_name] = {
+                    "基金值": fund_style_factors[factor_name]["基金值"],
+                    "同类平均": fund_style_factors[factor_name]["同类平均"],
+                    "近似指数": closest_index_name
+                }
+    
+    return result
 
 if __name__ == "__main__":
     # 示例基金代码列表
