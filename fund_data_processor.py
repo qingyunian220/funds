@@ -19,12 +19,25 @@ def get_fund_name_by_code(fund_code: str) -> Optional[str]:
         str: 基金名称，如果获取失败则返回None
     """
     try:
-        # 使用akshare获取基金基本信息
-        fund_info = ak.fund_individual_basic_info_xq(symbol=fund_code)
-        # 提取基金名称
-        fund_name_row = fund_info[fund_info['item'] == '基金名称']
-        if not fund_name_row.empty:
-            return fund_name_row['value'].iloc[0]
+        # # 使用akshare获取基金基本信息
+        # fund_info = ak.fund_individual_basic_info_xq(symbol=fund_code)
+        # # 提取基金名称
+        # fund_name_row = fund_info[fund_info['item'] == '基金名称']
+        # if not fund_name_row.empty:
+        #     return fund_name_row['value'].iloc[0]
+        # 读取jiuquaner_with_names.xlsx文件
+        fund_list = pd.read_excel('fund_list.xlsx')
+        # 确保基金代码列是字符串类型，并且是6位数格式
+        fund_list['基金代码'] = fund_list['基金代码'].astype(str).str.zfill(6)
+        # 通过fund_list中的code列匹配fund_code 得到fund_name
+        a = fund_list[fund_list['基金代码'] == fund_code]
+        fund_name = fund_list[fund_list['基金代码'] == fund_code]['基金简称']
+        # 只获取基金名称字符串
+        if not fund_name.empty:
+            fund_name_str = fund_name.iloc[0]
+            return fund_name_str
+        else:
+            print("未找到匹配的基金")
     except Exception as e:
         print(f"获取基金 {fund_code} 名称时出错: {e}")
     return None
@@ -200,7 +213,7 @@ def crawl_fund_cyrjg_data(fund_code: str) -> Dict:
 
         # 解析返回的数据
         text = response.text
-        print("持有人结构数据:",text)
+        # print("持有人结构数据:",text)
 
         # 使用正则表达式提取apidata.content中的HTML表格数据
         apidata_match = re.search(r'var apidata=\{ content:"([^"]*)"', text)
@@ -474,8 +487,6 @@ def process_fund_data(original_fund_code: str):
     print("聚合后的基金规模数据:")
     for item in aggregated_scale_data:
         print(f"  日期: {item['日期']}, 期末净资产: {item['期末净资产']} 亿元")
-        # for detail in item['基金明细']:
-        #     print(f"    - {detail['基金代码']} {detail['基金名称']}: {detail['期末净资产']} 亿元")
     # 5. 聚合持有人结构数据
     print("正在聚合基金持有人结构数据...")
     aggregated_cyrjg_data = aggregate_fund_cyrjg_data(cyrjg_data_list)

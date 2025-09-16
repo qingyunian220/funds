@@ -1,9 +1,11 @@
 import time
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+
 import json
 import re
 from datetime import datetime
@@ -54,6 +56,8 @@ def load_cached_data(fund_data_file_path):
     
     return None
 
+
+
 def extract_fund_style_factors(fund_codes, fund_names=None,fund_data_file_path=None):
     """
     提取多只基金的风格因子数据
@@ -87,14 +91,21 @@ def extract_fund_style_factors(fund_codes, fund_names=None,fund_data_file_path=N
     chrome_options = Options()
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
+    # 指定Chrome浏览器安装路径
+    chrome_location = r'C:\Program Files\Google\Chrome\Application\chrome.exe'
+    chrome_options.binary_location = chrome_location
+    # 指定ChromeDriver路径
+    driver_path = r'C:\Users\18207\.wdm\drivers\chromedriver\win64\140.0.7339.82\chromedriver-win32\chromedriver.exe'
+    # 创建Service对象
+    service = Service(executable_path=driver_path)
     
     # 不使用无头模式，方便查看页面
-    chrome_options.add_argument("--headless")
+    # chrome_options.add_argument("--headless")
     # 存储所有基金的数据
     all_funds_data = {}
     try:
         # 初始化WebDriver
-        driver = webdriver.Chrome(options=chrome_options)
+        driver = webdriver.Chrome(service=service,options=chrome_options)
         driver.maximize_window()
         # 遍历每只基金代码
         for i, fund_code in enumerate(fund_codes):
@@ -120,7 +131,7 @@ def extract_fund_style_factors(fund_codes, fund_names=None,fund_data_file_path=N
                         EC.element_to_be_clickable((By.XPATH, "//span[text()='资产配置']"))
                     )
                     driver.execute_script("arguments[0].click();", allocation_tab)
-                    print(f"基金 {fund_code}: 已点击'资产配置'按钮")
+                    # print(f"基金 {fund_code}: 已点击'资产配置'按钮")
                     time.sleep(3)
                 except Exception as e:
                     print(f"基金 {fund_code}: 点击'资产配置'按钮时出错: {e}")
@@ -132,14 +143,14 @@ def extract_fund_style_factors(fund_codes, fund_names=None,fund_data_file_path=N
                         EC.element_to_be_clickable((By.XPATH, "//span[contains(text(), '持股风格')]"))
                     )
                     driver.execute_script("arguments[0].click();", style_tab)
-                    print(f"基金 {fund_code}: 已点击'持股风格'标签")
+                    # print(f"基金 {fund_code}: 已点击'持股风格'标签")
                     time.sleep(3)
                 except Exception as e:
                     print(f"基金 {fund_code}: 点击'持股风格'标签时出错: {e}")
                 # 获取页面源码
                 page_source = driver.page_source
                 # 保存完整的页面源码以供进一步分析（仅对最后一只基金保存）
-                if fund_code == fund_codes[-1]:
+                if fund_code == fund_codes[0]:
                     with open('fund_full_page.html', 'w', encoding='utf-8') as f:
                         f.write(page_source)
                 # 定义正则表达式模式来提取数据
@@ -159,7 +170,7 @@ def extract_fund_style_factors(fund_codes, fund_names=None,fund_data_file_path=N
                 
                 # 存储风格因子数据
                 fund_data["风格因子"] = style_factors
-                print(f"基金 {fund_code}: 成功提取风格因子数据")
+                # print(f"基金 {fund_code}: 成功提取风格因子数据")
                 
                 # 点击"股票持仓"按钮并获取重仓股票前10占比
                 try:
@@ -168,7 +179,7 @@ def extract_fund_style_factors(fund_codes, fund_names=None,fund_data_file_path=N
                         EC.element_to_be_clickable((By.XPATH, "//span[text()='股票持仓']"))
                     )
                     driver.execute_script("arguments[0].click();", stock_position_tab)
-                    print(f"基金 {fund_code}: 已点击'股票持仓'按钮")
+                    # print(f"基金 {fund_code}: 已点击'股票持仓'按钮")
                     time.sleep(3)
                     
                     # 查找重仓股票前10占比信息
@@ -211,11 +222,7 @@ def extract_fund_style_factors(fund_codes, fund_names=None,fund_data_file_path=N
                                 }
                         else:
                             fund_data["股票持仓"] = None
-                    
-                    if fund_data["股票持仓"]:
-                        print(f"基金 {fund_code}: 成功提取股票持仓数据: {fund_data['股票持仓']['重仓股票信息']}")
-                    else:
-                        print(f"基金 {fund_code}: 未找到股票持仓数据")
+                            print(f"基金 {fund_code}: 未找到股票持仓数据")
                     
                 except Exception as e:
                     print(f"基金 {fund_code}: 获取股票持仓数据时出错: {e}")
