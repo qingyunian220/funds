@@ -4,6 +4,8 @@ import re
 import pandas as pd
 from typing import Dict, List, Optional, Tuple
 import akshare as ak
+from datetime import datetime, timedelta
+import os
 
 from fund_search_parser import fetch_and_parse_fund_search
 
@@ -403,47 +405,42 @@ def aggregate_fund_cyrjg_data(cyrjg_data_list: List[Dict]) -> List[Dict]:
     return result[:5]
 
 
-def update_fund_data_json(fund_code: str, fund_name: str, aggregated_scale_data: List[Dict], 
-                         aggregated_cyrjg_data: List[Dict] = None, json_file_path: str = 'fund_data.json'):
+def update_fund_data_json(target_fund_code: str, target_fund_name: str, 
+                         aggregated_scale_data: List[Dict], aggregated_cyrjg_data: List[Dict]):
     """
-    更新fund_data.json文件
+    更新基金数据到JSON文件
     
     Args:
-        fund_code (str): 基金代码
-        fund_name (str): 基金名称
+        target_fund_code (str): 目标基金代码
+        target_fund_name (str): 目标基金名称
         aggregated_scale_data (list): 聚合后的基金规模数据
         aggregated_cyrjg_data (list): 聚合后的基金持有人结构数据
-        json_file_path (str): JSON文件路径
     """
-    try:
-        # 读取现有数据
-        with open(json_file_path, 'r', encoding='utf-8') as f:
+    fund_data_file = 'fund_data.json'
+    
+    # 读取现有数据
+    if os.path.exists(fund_data_file):
+        with open(fund_data_file, 'r', encoding='utf-8') as f:
             fund_data = json.load(f)
-    except FileNotFoundError:
-        fund_data = {}
-    except Exception as e:
-        print(f"读取 {json_file_path} 时出错: {e}")
+    else:
         fund_data = {}
     
-    # 更新基金规模数据
-    if fund_code not in fund_data:
-        fund_data[fund_code] = {
-            "基金名称": fund_name
-        }
+    # 更新基金数据
+    if target_fund_code not in fund_data:
+        fund_data[target_fund_code] = {}
+        
+    fund_data[target_fund_code].update({
+        '基金名称': target_fund_name,
+        '规模数据': aggregated_scale_data,
+        '持有人结构': aggregated_cyrjg_data,
+        '更新时间': datetime.now().strftime('%Y-%m-%d')  # 添加更新时间
+    })
     
-    fund_data[fund_code]["基金规模"] = aggregated_scale_data
+    # 写入文件
+    with open(fund_data_file, 'w', encoding='utf-8') as f:
+        json.dump(fund_data, f, ensure_ascii=False, indent=2)
     
-    # 如果提供了持有人结构数据，则也更新这部分数据
-    if aggregated_cyrjg_data is not None:
-        fund_data[fund_code]["持有人结构"] = aggregated_cyrjg_data
-    
-    # 写入更新后的数据
-    try:
-        with open(json_file_path, 'w', encoding='utf-8') as f:
-            json.dump(fund_data, f, ensure_ascii=False, indent=2)
-        print(f"基金 {fund_code} 的数据已更新到 {json_file_path}")
-    except Exception as e:
-        print(f"写入 {json_file_path} 时出错: {e}")
+    print(f"已更新基金 {target_fund_code} 的数据到 {fund_data_file}")
 
 
 def process_fund_data(original_fund_code: str):
@@ -454,6 +451,85 @@ def process_fund_data(original_fund_code: str):
         original_fund_code (str): 原始基金代码
     """
     print(f"开始处理基金代码: {original_fund_code}")
+    
+    # 1. 根据基金代码查找基金名称
+    fund_name = get_fund_name_by_code(original_fund_code)
+    if not fund_name:
+        print(f"无法获取基金 {original_fund_code} 的名称")
+        return
+    
+    print(f"基金名称: {fund_name}")
+    base_name = fund_name
+    if fund_name.endswith('A') or fund_name.endswith('C'):
+        base_name = fund_name[:-1]
+    # 2. 根据基金名称查找对应的基金代码(A+C)
+    # [{'code': '015381', 'name': '东方兴瑞趋势领航混合A'}, {'code': '015382', 'name': '东方兴瑞趋势领航混合C'}]
+    code_names = fetch_and_parse_fund_search(base_name)
+    # 3. 获取A类和C类基金的规模数据
+    scale_data_list = []
+    cyrjg_data_list = []
+    for code_name in code_names:
+        scale_data = crawl_fund_scale_data(code_name['code'])
+        scale_data_list.append(scale_data)
+        cyrjg_data = crawl_fund_cyrjg_data(code_name['code'])
+        cyrjg_data_list.append(cyrjg_data)
+    # 4. 聚合规模数据
+    print("正在聚合基金规模数据...")
+    aggregated_scale_data = aggregate_fund_scale_data(scale_data_list)
+    
+    if not aggregated_scale_data:
+        print("未能获取有效的基金规模数据")
+        return
+    # 显示聚合后的数据
+    print("聚合后的基金规模数据:")
+    for item in aggregated_scale_data:
+        print(f"  日期: {item['日期']}, 期末净资产: {item['期末净资产']} 亿元")
+    # 5. 聚合持有人结构数据
+    print("正在聚合基金持有人结构数据...")
+    aggregated_cyrjg_data = aggregate_fund_cyrjg_data(cyrjg_data_list)
+    print("聚合后的基金持有人结构数据:")
+    for item in aggregated_cyrjg_data:
+        print(f"  日期: {item['日期']},机构持有比例:{item['机构持有比例']}")
+        # for detail in item['基金明细']:
+        #     print(f"    - {detail['基金代码']} {detail['基金名称']}: {detail['机构持有比例']}")
+    # 6. 更新到fund_data.json中
+    target_fund_code = original_fund_code
+    target_fund_name = fund_name
+    update_fund_data_json(target_fund_code, target_fund_name, aggregated_scale_data, aggregated_cyrjg_data)
+
+
+def process_fund_data_with_cache(original_fund_code: str, cache_days: int = 90):
+    """
+    处理基金数据的完整流程（带缓存机制）
+    
+    Args:
+        original_fund_code (str): 原始基金代码
+        cache_days (int): 缓存天数，默认90天（约一个季度）
+    """
+    print(f"开始处理基金代码: {original_fund_code}")
+    
+    # 检查是否有缓存数据且未过期
+    fund_data_file = 'fund_data.json'
+    if os.path.exists(fund_data_file):
+        try:
+            with open(fund_data_file, 'r', encoding='utf-8') as f:
+                all_fund_data = json.load(f)
+                
+            if original_fund_code in all_fund_data:
+                fund_info = all_fund_data[original_fund_code]
+                # 检查更新时间
+                if '更新时间' in fund_info:
+                    update_time_str = fund_info['更新时间']
+                    update_time = datetime.strptime(update_time_str, '%Y-%m-%d')
+                    # 如果距离现在不到cache_days天，则使用缓存数据
+                    if datetime.now() - update_time < timedelta(days=cache_days):
+                        print(f"基金 {original_fund_code} 的数据在 {cache_days} 天内已更新，使用缓存数据")
+                        return
+        except Exception as e:
+            print(f"读取缓存数据时出错: {e}")
+    
+    # 如果没有缓存或者缓存已过期，则执行完整流程
+    print(f"基金 {original_fund_code} 需要更新数据...")
     
     # 1. 根据基金代码查找基金名称
     fund_name = get_fund_name_by_code(original_fund_code)

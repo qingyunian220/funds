@@ -75,8 +75,10 @@ class SimuwangBrowser:
         """
         try:
             print("正在初始化浏览器...")
+            options = uc.ChromeOptions()
+            options.add_argument("--disable-notifications")
             self.driver = uc.Chrome(
-                options=uc.ChromeOptions(),
+                options=options,
                 browser_executable_path=r'C:\Program Files\Google\Chrome\Application\chrome.exe',
                 driver_executable_path=r'C:\Users\18207\.wdm\drivers\chromedriver\win64\140.0.7339.82\chromedriver-win32\chromedriver.exe',
                 version_main=140  # 匹配你的Chrome版本
@@ -278,6 +280,7 @@ class SimuwangBrowser:
             #     if window != current_window:
             #         self.driver.switch_to.window(window)
             #         break
+            self.driver.close()
             self.driver.switch_to.window(all_windows[-1])
             # 等待页面加载完成，最多等待30秒
             try:
@@ -305,7 +308,7 @@ class SimuwangBrowser:
             # 打印当前页面URL
             print(f"当前页面URL: {self.driver.current_url}")
             # 获取动态回撤数据
-            table = WebDriverWait(self.driver, 10).until(
+            table = WebDriverWait(self.driver, 30).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR,
                                                 "div.el-table--fit.el-table--enable-row-hover.el-table--enable-row-transition.el-table.el-table--layout-fixed.mt-16.header-blue.is-scrolling-none"))
             )

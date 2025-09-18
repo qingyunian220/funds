@@ -1,5 +1,50 @@
 import pandas as pd
 import akshare as ak
+import os
+from datetime import datetime
+
+
+def get_fund_list(force_update=False):
+    """
+    获取基金列表数据，每月更新一次
+    
+    Args:
+        force_update (bool): 是否强制更新数据，默认为False
+        
+    Returns:
+        pandas.DataFrame: 基金列表数据
+    """
+    fund_list_file = 'fund_list.xlsx'
+    
+    # 检查文件是否存在且不是本月创建的
+    if os.path.exists(fund_list_file) and not force_update:
+        # 获取文件修改时间
+        file_mtime = os.path.getmtime(fund_list_file)
+        file_date = datetime.fromtimestamp(file_mtime)
+        current_date = datetime.now()
+        
+        # 如果是本月创建的文件，则直接读取
+        if file_date.year == current_date.year and file_date.month == current_date.month:
+            print("读取现有的基金列表文件")
+            fund_list_df = pd.read_excel(fund_list_file)
+            print(f"fund_list.xlsx 中共有 {len(fund_list_df)} 条记录")
+            return fund_list_df
+        else:
+            print("现有基金列表文件不是本月创建，需要更新")
+    
+    # 获取最新的基金列表数据
+    print("正在获取最新的基金列表数据...")
+    fund_list = ak.fund_name_em()
+    
+    # 将基金代码格式化为6位数，不足的前面补0
+    fund_list['基金代码'] = fund_list['基金代码'].apply(lambda x: str(x).zfill(6))
+    
+    # 将基金列表保存到Excel文件
+    fund_list.to_excel(fund_list_file, index=False)
+    print(f"已将{len(fund_list)}只基金数据保存到{fund_list_file}文件中")
+    
+    return fund_list
+
 
 def process_jiuquaner_with_fund_names(excel_path):
     """
@@ -10,13 +55,7 @@ def process_jiuquaner_with_fund_names(excel_path):
     print(f"{excel_path} 中共有 {len(jiuquaner_df)} 条记录")
 
     # 获取基金列表数据
-    fund_list = ak.fund_name_em()
-    # 将基金代码格式化为6位数，不足的前面补0
-    fund_list['基金代码'] = fund_list['基金代码'].apply(lambda x: str(x).zfill(6))
-    # 将基金列表保存到CSV文件
-    fund_list.to_excel('fund_list.xlsx', index=False)
-    fund_list_df = pd.read_excel('fund_list.xlsx')
-    print(f"fund_list.csv 中共有 {len(fund_list_df)} 条记录")
+    fund_list_df = get_fund_list()
     
     # 创建一个字典用于快速查找基金简称
     # 注意基金代码在CSV中是数字格式，而在Excel中也是数字格式
@@ -60,4 +99,4 @@ def process_jiuquaner_with_fund_names(excel_path):
     return output_filename
 
 if __name__ == "__main__":
-    process_jiuquaner_with_fund_names()
+    process_jiuquaner_with_fund_names('jiuquaner.xlsx')

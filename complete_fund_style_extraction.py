@@ -143,7 +143,7 @@ def extract_fund_style_factors(fund_codes, fund_names=None,fund_data_file_path=N
                         EC.element_to_be_clickable((By.XPATH, "//span[contains(text(), '持股风格')]"))
                     )
                     driver.execute_script("arguments[0].click();", style_tab)
-                    # print(f"基金 {fund_code}: 已点击'持股风格'标签")
+                    print(f"基金 {fund_code}: 已点击'持股风格'标签")
                     time.sleep(3)
                 except Exception as e:
                     print(f"基金 {fund_code}: 点击'持股风格'标签时出错: {e}")
@@ -153,8 +153,8 @@ def extract_fund_style_factors(fund_codes, fund_names=None,fund_data_file_path=N
                 if fund_code == fund_codes[0]:
                     with open('fund_full_page.html', 'w', encoding='utf-8') as f:
                         f.write(page_source)
-                # 定义正则表达式模式来提取数据
-                pattern = r'<p data-v-101724a4="" class="item">(.*?)<span data-v-101724a4="" class="s1 jq_hm_font"[^>]*>(.*?)</span>/<span data-v-101724a4="" class="s2 jq_hm_font"[^>]*>(.*?)</span></p>'
+                # 定义正则表达式模式来提取数据，不依赖于特定的data-v属性值
+                pattern = r'<p data-v-[0-9a-f]{8}="" class="item">(.*?)<span data-v-[0-9a-f]{8}="" class="s1 jq_hm_font"[^>]*>(.*?)</span>/<span data-v-[0-9a-f]{8}="" class="s2 jq_hm_font"[^>]*>(.*?)</span></p>'
                 # 查找所有匹配项
                 matches = re.findall(pattern, page_source)
                 # 提取数据
