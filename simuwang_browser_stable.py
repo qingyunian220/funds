@@ -76,7 +76,7 @@ class SimuwangBrowser:
         try:
             print("正在初始化浏览器...")
             options = uc.ChromeOptions()
-            options.add_argument("--disable-notifications")
+            # options.add_argument("--disable-notifications")
             self.driver = uc.Chrome(
                 options=options,
                 browser_executable_path=r'C:\Program Files\Google\Chrome\Application\chrome.exe',
@@ -280,7 +280,7 @@ class SimuwangBrowser:
             #     if window != current_window:
             #         self.driver.switch_to.window(window)
             #         break
-            self.driver.close()
+            # self.driver.close()
             self.driver.switch_to.window(all_windows[-1])
             # 等待页面加载完成，最多等待30秒
             try:

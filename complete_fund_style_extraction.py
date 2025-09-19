@@ -236,15 +236,49 @@ def extract_fund_style_factors(fund_codes, fund_names=None,fund_data_file_path=N
                 all_funds_data[fund_code] = None
         
         # 保存结果到文件
-        # 添加元数据信息
-        all_funds_data['_metadata'] = {
+        # 如果文件已存在，加载现有数据并更新特定字段
+        existing_data = {}
+        if fund_data_file_path and os.path.exists(fund_data_file_path):
+            try:
+                with open(fund_data_file_path, 'r', encoding='utf-8') as f:
+                    existing_data = json.load(f)
+                print(f"已加载现有数据，共 {len(existing_data)} 条记录")
+            except Exception as e:
+                print(f"读取现有数据文件时出错: {e}")
+        
+        # 更新现有数据中的风格因子和股票持仓信息，而不是覆盖整个数据
+        for fund_code, fund_info in all_funds_data.items():
+            if fund_info is not None:  # 只更新成功获取的数据
+                if fund_code not in existing_data:
+                    existing_data[fund_code] = {}
+                
+                # 更新基金名称（如果存在）
+                if "基金名称" in fund_info:
+                    existing_data[fund_code]["基金名称"] = fund_info["基金名称"]
+                
+                # 更新风格因子
+                if "风格因子" in fund_info:
+                    existing_data[fund_code]["风格因子"] = fund_info["风格因子"]
+                
+                # 更新股票持仓
+                if "股票持仓" in fund_info:
+                    existing_data[fund_code]["股票持仓"] = fund_info["股票持仓"]
+                
+                print(f"已更新基金 {fund_code} 的数据")
+        
+        # 添加或更新元数据信息
+        existing_data['_metadata'] = {
             'update_time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             'fund_count': len(fund_codes)
         }
-        with open(fund_data_file_path, 'w', encoding='utf-8') as f:
-            json.dump(all_funds_data, f, ensure_ascii=False, indent=2)
+        
+        # 保存更新后的数据
+        if fund_data_file_path:
+            with open(fund_data_file_path, 'w', encoding='utf-8') as f:
+                json.dump(existing_data, f, ensure_ascii=False, indent=2)
+            print(f"数据已保存到 {fund_data_file_path}")
 
-        return all_funds_data
+        return existing_data
         
     except Exception as e:
         print(f"发生错误: {e}")
