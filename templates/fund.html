@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>基金数据展示</title>
+    <meta name="renderer" content="webkit">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="/static/layui-v2.11.6/layui/css/layui.css" rel="stylesheet">
+    <style>
+        .fund-card {
+            margin-bottom: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .fund-card-header {
+            background-color: #f8f8f8;
+            padding: 15px;
+            border-bottom: 1px solid #eee;
+            border-radius: 8px 8px 0 0;
+        }
+        .fund-card-body {
+            padding: 15px;
+        }
+        .fund-info-item {
+            margin-bottom: 10px;
+        }
+        .fund-info-label {
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .layui-card-title {
+            font-size: 18px;
+        }
+        .factor-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 10px;
+            margin: 10px 0;
+        }
+        .factor-item {
+            text-align: center;
+            padding: 10px;
+            background-color: #f5f5f5;
+            border-radius: 4px;
+        }
+        .factor-value {
+            font-size: 18px;
+            font-weight: bold;
+            color: #1E9FFF;
+        }
+        .factor-name {
+            font-size: 12px;
+            color: #666;
+        }
+        .scale-item, .holder-item {
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+        }
+        .scale-item:last-child, .holder-item:last-child {
+            border-bottom: none;
+        }
+        .section-title {
+            font-weight: bold;
+            margin: 15px 0 10px 0;
+            color: #333;
+            font-size: 16px;
+        }
+        .return-positive {
+            color: #ff0000;
+        }
+        .return-negative {
+            color: #008000;
+        }
+        /* 搜索框容器样式 */
+        .search-container {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #f8f8f8;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+<div class="layui-container">
+    <div class="layui-row">
+        <div class="layui-col-md12">
+            <fieldset class="layui-elem-field layui-field-title" style="margin-top: 20px;">
+                <legend>基金数据展示</legend>
+            </fieldset>
+        </div>
+    </div>
+    
+    <!-- 搜索框区域 -->
+    <div class="layui-row">
+        <div class="layui-col-md12">
+            <div class="search-container">
+                <form class="layui-form" lay-filter="fund-search-form">
+                    <div class="layui-form-item">
+                        <div class="layui-inline">
+                            <label class="layui-form-label">搜索</label>
+                            <div class="layui-input-inline" style="width: 300px;">
+                                <input type="text" name="keyword" placeholder="请输入基金代码或基金名称" autocomplete="off" class="layui-input" id="search-keyword">
+                            </div>
+                        </div>
+                        <div class="layui-inline">
+                            <button class="layui-btn" lay-submit lay-filter="search-btn" id="search-btn">搜索</button>
+                            <button type="reset" class="layui-btn layui-btn-primary" id="reset-btn">重置</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <div class="layui-row layui-col-space15" id="fund-container">
+        <!-- 基金卡片将通过JavaScript动态生成 -->
+    </div>
+</div>
+
+<!--<style>-->
+<!--        .layui-table {-->
+<!--            margin: 10px 0;-->
+<!--        }-->
+<!--    </style>-->
+<!--</head>-->
+<!--<body>-->
+<!--<div class="layui-container">-->
+<!--    <div class="layui-row">-->
+<!--        <div class="layui-col-md12">-->
+<!--            <fieldset class="layui-elem-field layui-field-title" style="margin-top: 20px;">-->
+<!--                <legend>基金数据展示</legend>-->
+<!--            </fieldset>-->
+<!--        </div>-->
+<!--    </div>-->
+<!--    -->
+<!--    <div class="layui-row layui-col-space15" id="fund-container">-->
+<!--        &lt;!&ndash; 基金卡片将通过JavaScript动态生成 &ndash;&gt;-->
+<!--    </div>-->
+<!--</div>-->
+
+<script src="/static/layui-v2.11.6/layui/layui.js"></script>
+<script>
+layui.use(['jquery', 'element', 'util', 'table', 'form'], function(){
+    var $ = layui.jquery;
+    var element = layui.element;
+    var util = layui.util;
+    var table = layui.table;
+    var form = layui.form;
+    
+    // 存储原始基金数据
+    var fundData = {};
+    
+    // 获取基金数据
+    $.get('/api/fund_data', function(res) {
+        // 移除_metadata字段
+        delete res['_metadata'];
+        
+        // 保存原始数据
+        fundData = res;
+        
+        // 显示所有基金数据
+        renderFundData(fundData);
+    });
+    
+    // 渲染基金数据
+    function renderFundData(data) {
+        // 清空容器
+        $('#fund-container').empty();
+        
+        // 遍历每个基金
+        for (var fundCode in data) {
+            var fund = data[fundCode];
+            
+            // 为表格生成唯一ID
+            var scaleTableId = 'scale-table-' + fundCode;
+            var holderTableId = 'holder-table-' + fundCode;
+            var returnTableId = 'return-table-' + fundCode;
+            
+            // 创建基金卡片
+            var cardHtml = `
+                <div class="layui-col-md6">
+                    <div class="layui-card fund-card">
+                        <div class="layui-card-header fund-card-header">
+                            <span class="layui-card-title">${fund['基金名称'] || '--'} (${fundCode})</span>
+                        </div>
+                        <div class="layui-card-body fund-card-body">
+                            <!-- 风格因子 -->
+                            <div class="section-title">风格因子</div>
+                            <div class="factor-grid">
+                                ${generateFactorItem('市值', fund['风格因子']?.['市值']?.['基金值'], fund['风格因子']?.['市值']?.['同类平均'], fund['风格因子']?.['市值']?.['近似指数'])}
+                                ${generateFactorItem('成长', fund['风格因子']?.['成长']?.['基金值'], fund['风格因子']?.['成长']?.['同类平均'], fund['风格因子']?.['成长']?.['近似指数'])}
+                                ${generateFactorItem('盈利', fund['风格因子']?.['盈利']?.['基金值'], fund['风格因子']?.['盈利']?.['同类平均'], fund['风格因子']?.['盈利']?.['近似指数'])}
+                                ${generateFactorItem('价值', fund['风格因子']?.['价值']?.['基金值'], fund['风格因子']?.['价值']?.['同类平均'], fund['风格因子']?.['价值']?.['近似指数'])}
+                            </div>
+                            
+                            <!-- 股票持仓 -->
+                            <div class="section-title">股票持仓</div>
+                            <div class="fund-info-item">
+                                <span class="fund-info-label">重仓股票:</span>
+                                <span>${fund['股票持仓']?.['重仓股票信息'] || '--'}</span>
+                            </div>
+                            <div class="fund-info-item">
+                                <span class="fund-info-label">前十大重仓股占比:</span>
+                                <span>${fund['股票持仓']?.['前十大重仓股占比'] ? fund['股票持仓']['前十大重仓股占比'] + '%' : '--'}</span>
+                            </div>
+                            
+                            <!-- 换手率 -->
+                            <div class="section-title">换手率</div>
+                            <div class="fund-info-item">
+                                <span class="fund-info-label">换手率:</span>
+                                <span>${fund['换手率'] || '--'}</span>
+                            </div>
+                            
+                            <!-- 基金规模 -->
+                            <div class="section-title">基金规模历史（A+C）</div>
+                            <table id="${scaleTableId}" lay-filter="${scaleTableId}"></table>
+                            
+                            <!-- 区间收益 -->
+                            <div class="section-title">区间收益</div>
+                            <table id="${returnTableId}" lay-filter="${returnTableId}"></table>
+                            
+                            <!-- 回撤数据 -->
+                            <div class="section-title">回撤数据</div>
+                            <div class="drawdown-data">
+                                ${generateDrawdownData(fund['回撤数据'] || {})}
+                            </div>
+                            
+                            <!-- 持有人结构 -->
+                            <div class="section-title">持有人结构历史（A+C）</div>
+                            <table id="${holderTableId}" lay-filter="${holderTableId}"></table>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            $('#fund-container').append(cardHtml);
+            
+            // 渲染区间收益表格
+            table.render({
+                elem: '#' + returnTableId,
+                data: fund['区间收益'] || [],
+                cols: [[
+                    {field: '区间', title: '区间', width: 100},
+                    {field: '基金收益', title: '基金收益', width: 120, templet: function(d) {
+                        var value = d['基金收益']?.['百分比'] || '--';
+                        if (value !== '--' && value !== '0.00%') {
+                            return `<span class="${parseFloat(value) >= 0 ? 'return-positive' : 'return-negative'}">${value}</span>`;
+                        }
+                        return value;
+                    }},
+                    {field: '业绩比较基准', title: '业绩比较基准', width: 120, templet: function(d) {
+                        var value = d['业绩比较基准']?.['百分比'] || '--';
+                        return value;
+                    }},
+                    {field: '超额收益(几何)', title: '超额收益(几何)', width: 120, templet: function(d) {
+                        var value = d['超额收益(几何)']?.['百分比'] || '--';
+                        if (value !== '--' && value !== '0.00%') {
+                            return `<span class="${parseFloat(value) >= 0 ? 'return-positive' : 'return-negative'}">${value}</span>`;
+                        }
+                        return value;
+                    }},
+                    {field: '同类平均', title: '同类平均', width: 120, templet: function(d) {
+                        var value = d['同类平均']?.['百分比'] || '--';
+                        return value;
+                    }}
+                ]],
+                page: false,
+                limit: 100
+            });
+            
+            // 渲染基金规模表格
+            table.render({
+                elem: '#' + scaleTableId,
+                data: fund['规模数据'] || [],
+                cols: [[
+                    {field: '日期', title: '日期', width: 120},
+                    {field: '期末净资产', title: '期末净资产(亿)', width: 150}
+                ]],
+                page: false,
+                limit: 100
+            });
+            
+            // 渲染持有人结构表格
+            table.render({
+                elem: '#' + holderTableId,
+                data: fund['持有人结构'] || [],
+                cols: [[
+                    {field: '日期', title: '日期', width: 120},
+                    {field: '机构持有比例', title: '机构持有比例', width: 120},
+                    {field: '总份额（亿份）', title: '总份额(亿份)', width: 120}
+                ]],
+                page: false,
+                limit: 100
+            });
+        }
+    }
+    
+    // 监听搜索表单提交
+    form.on('submit(search-btn)', function(data) {
+        var keyword = data.field.keyword.trim().toLowerCase();
+        
+        // 如果搜索关键词为空，则显示所有基金
+        if (!keyword) {
+            renderFundData(fundData);
+            return false;
+        }
+        
+        // 过滤基金数据
+        var filteredData = {};
+        for (var fundCode in fundData) {
+            var fund = fundData[fundCode];
+            var fundName = fund['基金名称'] || '';
+            
+            // 根据基金代码或基金名称进行搜索
+            if (fundCode.toLowerCase().includes(keyword) || fundName.toLowerCase().includes(keyword)) {
+                filteredData[fundCode] = fund;
+            }
+        }
+        
+        // 渲染过滤后的数据
+        renderFundData(filteredData);
+        return false;
+    });
+    
+    // 监听重置按钮点击事件
+    $('#reset-btn').on('click', function() {
+        // 清空搜索框
+        $('#search-keyword').val('');
+        // 显示所有基金数据
+        renderFundData(fundData);
+        return false;
+    });
+    
+    // 生成因子项的函数
+    function generateFactorItem(name, fundValue, averageValue, indexName) {
+        return `
+            <div class="factor-item">
+                <div class="factor-name">${name}</div>
+                <div class="factor-value">${fundValue !== undefined ? fundValue.toFixed(2) : '--'}</div>
+                <div class="factor-average">同类平均: ${averageValue !== undefined ? averageValue.toFixed(2) : '--'}</div>
+                <div class="factor-index">近似指数: ${indexName || '--'}</div>
+            </div>
+        `;
+    }
+    
+    // 生成回撤数据的函数
+    function generateDrawdownData(drawdownData) {
+        var html = '<div class="layui-row layui-col-space15">';
+        var index = 0;
+        
+        for (var key in drawdownData) {
+            if (index % 4 === 0) {
+                if (index > 0) html += '</div>'; // 关闭上一行
+                html += '<div class="layui-row layui-col-space15" style="margin-bottom: 10px;">'; // 开新行
+            }
+            
+            html += `
+                <div class="layui-col-md3">
+                    <div style="background-color: #f5f5f5; padding: 10px; border-radius: 4px;">
+                        <div style="font-weight: bold; margin-bottom: 5px;">${key}</div>
+                        <div>${drawdownData[key]}</div>
+                    </div>
+                </div>
+            `;
+            index++;
+        }
+        
+        if (index > 0) html += '</div>'; // 关闭最后一行
+        return html || '<div>暂无数据</div>';
+    }
+});
+</script>
+</body>
+</html>
