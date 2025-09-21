@@ -25,7 +25,9 @@ def run_fund_data_update():
         {"code": "512510", "name": "中证500"},
         {"code": "516300", "name": "中证1000"},
         {"code": "563300", "name": "中证2000"},
-        {"code": "159907", "name": "国证2000"}
+        {"code": "159907", "name": "国证2000"},
+        {"code": "320016", "name": "小微盘"}
+
     ]
     fund_codes = [fund["code"] for fund in funds]
     fund_names = [fund["name"] for fund in funds]

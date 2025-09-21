@@ -57,6 +57,20 @@ def load_cached_data(fund_data_file_path):
     return None
 
 
+def load_config():
+    """
+    加载配置文件
+
+    Returns:
+        dict: 配置信息字典
+    """
+    config_path = os.path.join(os.path.dirname(__file__), 'config.json')
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"读取配置文件时出错: {e}")
+        return {}
 
 def extract_fund_style_factors(fund_codes, fund_names=None,fund_data_file_path=None):
     """
@@ -86,18 +100,20 @@ def extract_fund_style_factors(fund_codes, fund_names=None,fund_data_file_path=N
             # 可以选择只处理未缓存的基金，但当前实现将重新获取所有数据
         else:
             print("缓存中没有请求的基金数据")
-    
+
+    # 加载配置文件
+    config = load_config()
     # 设置Chrome选项
     chrome_options = Options()
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     # 指定Chrome浏览器安装路径
-    chrome_location = r'C:\Program Files\Google\Chrome\Application\chrome.exe'
-    chrome_options.binary_location = chrome_location
+    browser_executable_path = config.get("browser_executable_path", "")
+    chrome_options.binary_location = browser_executable_path
     # 指定ChromeDriver路径
-    driver_path = r'C:\Users\18207\.wdm\drivers\chromedriver\win64\140.0.7339.82\chromedriver-win32\chromedriver.exe'
+    driver_executable_path = config.get("driver_executable_path", "")
     # 创建Service对象
-    service = Service(executable_path=driver_path)
+    service = Service(executable_path=driver_executable_path)
     
     # 不使用无头模式，方便查看页面
     # chrome_options.add_argument("--headless")

@@ -76,11 +76,15 @@ class SimuwangBrowser:
         try:
             print("正在初始化浏览器...")
             options = uc.ChromeOptions()
-            # options.add_argument("--disable-notifications")
+            options.add_argument("--disable-notifications")
+            # options.add_argument('--headless')
+            options.add_argument('--disable-gpu')
+            options.add_argument('--no-sandbox')
+            options.add_argument('--disable-dev-shm-usage')
             self.driver = uc.Chrome(
                 options=options,
-                browser_executable_path=r'C:\Program Files\Google\Chrome\Application\chrome.exe',
-                driver_executable_path=r'C:\Users\18207\.wdm\drivers\chromedriver\win64\140.0.7339.82\chromedriver-win32\chromedriver.exe',
+                browser_executable_path=self.config.get("browser_executable_path", ""),
+                driver_executable_path=self.config.get("driver_executable_path", ""),
                 version_main=140  # 匹配你的Chrome版本
             )
             # 设置页面加载超时
