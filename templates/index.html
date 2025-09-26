@@ -77,7 +77,7 @@
     <div class="layui-row">
         <div class="layui-col-md12">
             <fieldset class="layui-elem-field layui-field-title" style="margin-top: 20px;">
-                <legend>天赐良基 和而不同</legend>
+                <legend>基金数据共享</legend>
             </fieldset>
         </div>
     </div>
@@ -103,7 +103,7 @@
                         <li>实时跟踪与调仓提醒</li>
                     </ul>
                     <div class="btn-container">
-                        <button class="layui-btn layui-btn-primary">敬请期待</button>
+                        <a href="/fund_ranking" class="layui-btn layui-btn-primary">查看详情</a>
                     </div>
                 </div>
             </div>
@@ -210,8 +210,8 @@ layui.use(['jquery', 'layer'], function(){
     $('.layui-card-body .layui-btn').click(function(e) {
         var href = $(this).attr('href');
         
-        // 只对"超额基金"模块的查看详情按钮进行密令验证
-        if(href === '/fund') {
+        // 对"超额基金"和"指数增强"模块的查看详情按钮进行密令验证
+        if(href === '/fund' || href === '/fund_ranking') {
             e.preventDefault();
             
             // 先检查是否已有有效密令
