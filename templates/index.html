@@ -165,8 +165,9 @@
 
 <script src="/static/layui-v2.11.6/layui/layui.js"></script>
 <script>
-layui.use(['jquery'], function(){
+layui.use(['jquery', 'layer'], function(){
     var $ = layui.jquery;
+    var layer = layui.layer;
     
     // 为卡片添加悬停效果
     $('.module-card').hover(
@@ -177,6 +178,72 @@ layui.use(['jquery'], function(){
             $(this).css('transform', 'translateY(0)');
         }
     );
+    
+    // 设置密令和过期时间 (实际项目中应该从服务器获取)
+    var SECRET_KEY = "fund2025"; // 这里设置密令
+    
+    // 检查明令是否有效
+    function checkSecretKey() {
+        var storedKey = localStorage.getItem('fund_secret_key');
+        var expireTime = localStorage.getItem('fund_key_expire_time');
+        var now = new Date().getTime();
+        
+        // 检查是否存在密令且未过期
+        if(storedKey === SECRET_KEY && expireTime && now < parseInt(expireTime)) {
+            return true;
+        } else {
+            // 清除过期的密令
+            localStorage.removeItem('fund_secret_key');
+            localStorage.removeItem('fund_key_expire_time');
+            return false;
+        }
+    }
+    
+    // 保存密令和设置过期时间 (8小时)
+    function saveSecretKey() {
+        var expireTime = new Date().getTime() + (8 * 60 * 60 * 1000); // 8小时后过期
+        localStorage.setItem('fund_secret_key', SECRET_KEY);
+        localStorage.setItem('fund_key_expire_time', expireTime);
+    }
+    
+    // 为查看详情按钮添加点击事件
+    $('.layui-card-body .layui-btn').click(function(e) {
+        var href = $(this).attr('href');
+        
+        // 只对"超额基金"模块的查看详情按钮进行密令验证
+        if(href === '/fund') {
+            e.preventDefault();
+            
+            // 先检查是否已有有效密令
+            if(checkSecretKey()) {
+                window.location.href = href;
+                return;
+            }
+            
+            // 弹出密令输入框
+            layer.prompt({
+                title: '请输入密令',
+                formType: 1 // 密令输入框类型
+            }, function(value, index, elem){
+                if(value === '') {
+                    layer.msg('请输入密令');
+                    return elem.focus();
+                }
+                
+                if(value === SECRET_KEY) {
+                    // 保存密令和过期时间
+                    saveSecretKey();
+                    layer.close(index);
+                    layer.msg('密令正确，正在跳转...', {icon: 1}, function(){
+                        window.location.href = href;
+                    });
+                } else {
+                    layer.msg('密令错误，请重新输入', {icon: 2});
+                    elem.focus();
+                }
+            });
+        }
+    });
 });
 </script>
 </body>
