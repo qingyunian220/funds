@@ -101,6 +101,7 @@
         <li lay-id="zz1000">中证1000基金</li>
         <li lay-id="zz2000">中证2000基金</li>
         <li lay-id="gz2000">国证2000基金</li>
+        <li lay-id="small_fund">小微盘基金</li>
       </ul>
       <div class="layui-tabs-body">
         <div class="layui-tabs-item layui-show">
@@ -117,6 +118,9 @@
         </div>
         <div class="layui-tabs-item">
           <table class="layui-table" id="gz2000Table" lay-filter="gz2000Table"></table>
+        </div>
+        <div class="layui-tabs-item">
+          <table class="layui-table" id="small_fundTable" lay-filter="small_fundTable"></table>
         </div>
       </div>
     </div>
@@ -685,6 +689,104 @@
       },
       error: function(xhr, type, errorThrown){
         console.error('国证2000基金数据加载失败:', xhr, type, errorThrown);
+        console.log('响应内容:', xhr.responseText);
+      }
+    });
+
+    // 小微盘基金表格
+    table.render({
+      elem: '#small_fundTable',
+      url: '/get_fund_data?sheet=小微盘',
+      page: true,
+      limit: 100,
+      limits: [100,200],
+      request: {
+        pageName: 'page',
+        limitName: 'limit'
+      },
+      response: {
+        statusCode: 0
+      },
+      cols: [[
+        {field: '基金代码', title: '基金代码', width: 100, align: 'center'},
+        {field: '基金简称', title: '基金简称', width: 190, align: 'center'},
+        {field: '日期', title: '日期', width: 110, align: 'center'},
+        {field: '近1周', title: '近1周', width: 105, sort: true, align: 'center', templet: function(d) {
+          var value = d['近1周'];
+          if (value === null || value === undefined || value === '') {
+            return '';
+          }
+          // 显示时添加百分号，但不影响排序
+          return value + '%';
+        }},
+        {field: '近1月', title: '近1月', width: 105, sort: true, align: 'center', templet: function(d) {
+          var value = d['近1月'];
+          if (value === null || value === undefined || value === '') {
+            return '';
+          }
+          // 显示时添加百分号，但不影响排序
+          return value + '%';
+        }},
+        {field: '近3月', title: '近3月', width: 105, sort: true, align: 'center', templet: function(d) {
+          var value = d['近3月'];
+          if (value === null || value === undefined || value === '') {
+            return '';
+          }
+          // 显示时添加百分号，但不影响排序
+          return value + '%';
+        }},
+        {field: '近6月', title: '近6月', width: 105, sort: true, align: 'center', templet: function(d) {
+          var value = d['近6月'];
+          if (value === null || value === undefined || value === '') {
+            return '';
+          }
+          // 显示时添加百分号，但不影响排序
+          return value + '%';
+        }},
+        {field: '近1年', title: '近1年', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近1年'];
+          if (value === null || value === undefined || value === '') {
+            return '';
+          }
+          // 显示时添加百分号，但不影响排序
+          return value + '%';
+        }},
+        {field: '近2年', title: '近2年', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近2年'];
+          if (value === null || value === undefined || value === '') {
+            return '';
+          }
+          // 显示时添加百分号，但不影响排序
+          return value + '%';
+        }},
+        {field: '近3年', title: '近3年', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近3年'];
+          if (value === null || value === undefined || value === '') {
+            return '';
+          }
+          // 显示时添加百分号，但不影响排序
+          return value + '%';
+        }},
+        {field: '今年来', title: '今年来', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['今年来'];
+          if (value === null || value === undefined || value === '') {
+            return '';
+          }
+          // 显示时添加百分号，但不影响排序
+          return value + '%';
+        }},
+        {field: '成立时间', title: '成立时间', width: 110, align: 'center'},
+        {field: '最新规模', title: '最新规模', width: 100, align: 'center'}
+      ]],
+      done: function(res, curr, count){
+        console.log('小微盘基金数据加载完成:', res);
+        // 标记在多个时间段都排名前十的基金
+        highlightTop10(res, 'small_fundTable');
+        // 注册排序监听器
+        registerSortListener('small_fundTable');
+      },
+      error: function(xhr, type, errorThrown){
+        console.error('小微盘基金数据加载失败:', xhr, type, errorThrown);
         console.log('响应内容:', xhr.responseText);
       }
     });
