@@ -38,6 +38,18 @@
       font-weight: bold;
     }
     
+    /* 负数显示为绿色 */
+    .negative-number {
+      color: #16b777 !important;
+      font-weight: bold;
+    }
+    
+    /* 正数显示为红色 */
+    .positive-number {
+      color: #ff5722 !important;
+      font-weight: bold;
+    }
+    
     /* 标题区域样式 */
     .title-container {
       display: flex;
@@ -105,22 +117,22 @@
       </ul>
       <div class="layui-tabs-body">
         <div class="layui-tabs-item layui-show">
-          <table class="layui-table" id="hs300Table" lay-filter="hs300Table"></table>
+          <table class="layui-table" id="hs300Table" lay-filter="hs300Table">对比基准：华泰柏瑞沪深300ETF(510300)</table>
         </div>
         <div class="layui-tabs-item">
-          <table class="layui-table" id="zz500Table" lay-filter="zz500Table"></table>
+          <table class="layui-table" id="zz500Table" lay-filter="zz500Table">对比基准：华泰柏瑞中证500ETF(512510)</table>
         </div>
         <div class="layui-tabs-item">
-          <table class="layui-table" id="zz1000Table" lay-filter="zz1000Table"></table>
+          <table class="layui-table" id="zz1000Table" lay-filter="zz1000Table">对比基准：华泰柏瑞中证1000ETF(516300)</table>
         </div>
         <div class="layui-tabs-item">
-          <table class="layui-table" id="zz2000Table" lay-filter="zz2000Table"></table>
+          <table class="layui-table" id="zz2000Table" lay-filter="zz2000Table">对比基准：华泰柏瑞中证2000ETF(563300)</table>
         </div>
         <div class="layui-tabs-item">
-          <table class="layui-table" id="gz2000Table" lay-filter="gz2000Table"></table>
+          <table class="layui-table" id="gz2000Table" lay-filter="gz2000Table">对比基准：广发国证2000ETF(159907)</table>
         </div>
         <div class="layui-tabs-item">
-          <table class="layui-table" id="small_fundTable" lay-filter="small_fundTable"></table>
+          <table class="layui-table" id="small_fundTable" lay-filter="small_fundTable">对比基准：诺安多策略混合(320016)</table>
         </div>
       </div>
     </div>
@@ -139,7 +151,7 @@
       if (!res || !res.data || res.data.length === 0) return;
       
       // 定义需要检查的时间段
-      var periods = ['近1年','今年来', '近6月', '近3月', '近1月'];
+      var periods = ['近1年超额','今年来超额', '近6月超额', '近3月超额', '近1月超额'];
       
       // 为每个时间段计算排名前十的基金代码
       var top10CodesByPeriod = {};
@@ -206,7 +218,7 @@
     // 沪深300基金表格
     table.render({
       elem: '#hs300Table',
-      url: '/get_fund_data?sheet=沪深300基金',
+      url: '/get_fund_data?sheet=沪深300基金_超额',
       page: true,
       limit: 100,
       limits: [100,200],
@@ -218,74 +230,122 @@
         statusCode: 0
       },
       cols: [[
-        {field: '基金代码', title: '基金代码', width: 100, align: 'center'},
+        {field: '基金代码', title: '基金代码', width: 90, align: 'center'},
         {field: '基金简称', title: '基金简称', width: 190, align: 'center'},
-        {field: '日期', title: '日期', width: 110, align: 'center'},
-        {field: '近1周', title: '近1周', width: 105, sort: true, align: 'center', templet: function(d) {
-          var value = d['近1周'];
+        {field: '日期', title: '日期', width: 105, align: 'center'},
+        {field: '近1周超额', title: '近1周超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近1周超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近1月', title: '近1月', width: 105, sort: true, align: 'center', templet: function(d) {
-          var value = d['近1月'];
+        {field: '近1月超额', title: '近1月超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近1月超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近3月', title: '近3月', width: 105, sort: true, align: 'center', templet: function(d) {
-          var value = d['近3月'];
+        {field: '近3月超额', title: '近3月超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近3月超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近6月', title: '近6月', width: 105, sort: true, align: 'center', templet: function(d) {
-          var value = d['近6月'];
+        {field: '近6月超额', title: '近6月超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近6月超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近1年', title: '近1年', width: 110, sort: true, align: 'center', templet: function(d) {
-          var value = d['近1年'];
+        {field: '近1年超额', title: '近1年超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近1年超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近2年', title: '近2年', width: 110, sort: true, align: 'center', templet: function(d) {
-          var value = d['近2年'];
+        {field: '近2年超额', title: '近2年超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近2年超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近3年', title: '近3年', width: 110, sort: true, align: 'center', templet: function(d) {
-          var value = d['近3年'];
+        {field: '近3年超额', title: '近3年超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近3年超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '今年来', title: '今年来', width: 110, sort: true, align: 'center', templet: function(d) {
-          var value = d['今年来'];
+        {field: '今年来超额', title: '今年来超额', width: 120, sort: true, align: 'center', templet: function(d) {
+          var value = d['今年来超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '成立时间', title: '成立时间', width: 110, align: 'center'},
+        {field: '成立时间', title: '成立时间', width: 105, align: 'center'},
         {field: '最新规模', title: '最新规模', width: 100, align: 'center'}
       ]],
       done: function(res, curr, count){
@@ -304,7 +364,7 @@
     // 中证500基金表格
     table.render({
       elem: '#zz500Table',
-      url: '/get_fund_data?sheet=中证500基金',
+      url: '/get_fund_data?sheet=中证500基金_超额',
       page: true,
       limit: 100,
       limits: [100,200],
@@ -316,74 +376,122 @@
         statusCode: 0
       },
       cols: [[
-        {field: '基金代码', title: '基金代码', width: 100, align: 'center'},
+        {field: '基金代码', title: '基金代码', width: 90, align: 'center'},
         {field: '基金简称', title: '基金简称', width: 190, align: 'center'},
-        {field: '日期', title: '日期', width: 110, align: 'center'},
-        {field: '近1周', title: '近1周', width: 105, sort: true, align: 'center', templet: function(d) {
-          var value = d['近1周'];
+        {field: '日期', title: '日期', width: 105, align: 'center'},
+        {field: '近1周超额', title: '近1周超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近1周超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近1月', title: '近1月', width: 105, sort: true, align: 'center', templet: function(d) {
-          var value = d['近1月'];
+        {field: '近1月超额', title: '近1月超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近1月超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近3月', title: '近3月', width: 105, sort: true, align: 'center', templet: function(d) {
-          var value = d['近3月'];
+        {field: '近3月超额', title: '近3月超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近3月超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近6月', title: '近6月', width: 105, sort: true, align: 'center', templet: function(d) {
-          var value = d['近6月'];
+        {field: '近6月超额', title: '近6月超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近6月超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近1年', title: '近1年', width: 110, sort: true, align: 'center', templet: function(d) {
-          var value = d['近1年'];
+        {field: '近1年超额', title: '近1年超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近1年超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近2年', title: '近2年', width: 110, sort: true, align: 'center', templet: function(d) {
-          var value = d['近2年'];
+        {field: '近2年超额', title: '近2年超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近2年超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近3年', title: '近3年', width: 110, sort: true, align: 'center', templet: function(d) {
-          var value = d['近3年'];
+        {field: '近3年超额', title: '近3年超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近3年超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '今年来', title: '今年来', width: 110, sort: true, align: 'center', templet: function(d) {
-          var value = d['今年来'];
+        {field: '今年来超额', title: '今年来超额', width: 120, sort: true, align: 'center', templet: function(d) {
+          var value = d['今年来超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '成立时间', title: '成立时间', width: 110, align: 'center'},
+        {field: '成立时间', title: '成立时间', width: 105, align: 'center'},
         {field: '最新规模', title: '最新规模', width: 100, align: 'center'}
       ]],
       done: function(res, curr, count){
@@ -402,7 +510,7 @@
     // 中证1000基金表格
     table.render({
       elem: '#zz1000Table',
-      url: '/get_fund_data?sheet=中证1000基金',
+      url: '/get_fund_data?sheet=中证1000基金_超额',
       page: true,
       limit: 100,
       limits: [100,200],
@@ -414,74 +522,122 @@
         statusCode: 0
       },
       cols: [[
-        {field: '基金代码', title: '基金代码', width: 100, align: 'center'},
+        {field: '基金代码', title: '基金代码', width: 90, align: 'center'},
         {field: '基金简称', title: '基金简称', width: 190, align: 'center'},
-        {field: '日期', title: '日期', width: 110, align: 'center'},
-        {field: '近1周', title: '近1周', width: 105, sort: true, align: 'center', templet: function(d) {
-          var value = d['近1周'];
+        {field: '日期', title: '日期', width: 105, align: 'center'},
+        {field: '近1周超额', title: '近1周超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近1周超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近1月', title: '近1月', width: 105, sort: true, align: 'center', templet: function(d) {
-          var value = d['近1月'];
+        {field: '近1月超额', title: '近1月超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近1月超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近3月', title: '近3月', width: 105, sort: true, align: 'center', templet: function(d) {
-          var value = d['近3月'];
+        {field: '近3月超额', title: '近3月超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近3月超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近6月', title: '近6月', width: 105, sort: true, align: 'center', templet: function(d) {
-          var value = d['近6月'];
+        {field: '近6月超额', title: '近6月超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近6月超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近1年', title: '近1年', width: 110, sort: true, align: 'center', templet: function(d) {
-          var value = d['近1年'];
+        {field: '近1年超额', title: '近1年超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近1年超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近2年', title: '近2年', width: 110, sort: true, align: 'center', templet: function(d) {
-          var value = d['近2年'];
+        {field: '近2年超额', title: '近2年超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近2年超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近3年', title: '近3年', width: 110, sort: true, align: 'center', templet: function(d) {
-          var value = d['近3年'];
+        {field: '近3年超额', title: '近3年超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近3年超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '今年来', title: '今年来', width: 110, sort: true, align: 'center', templet: function(d) {
-          var value = d['今年来'];
+        {field: '今年来超额', title: '今年来超额', width: 120, sort: true, align: 'center', templet: function(d) {
+          var value = d['今年来超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '成立时间', title: '成立时间', width: 110, align: 'center'},
+        {field: '成立时间', title: '成立时间', width: 105, align: 'center'},
         {field: '最新规模', title: '最新规模', width: 100, align: 'center'}
       ]],
       done: function(res, curr, count){
@@ -500,7 +656,7 @@
     // 中证2000基金表格
     table.render({
       elem: '#zz2000Table',
-      url: '/get_fund_data?sheet=中证2000基金',
+      url: '/get_fund_data?sheet=中证2000基金_超额',
       page: true,
       limit: 100,
       limits: [100,200],
@@ -512,74 +668,122 @@
         statusCode: 0
       },
       cols: [[
-        {field: '基金代码', title: '基金代码', width: 100, align: 'center'},
+        {field: '基金代码', title: '基金代码', width: 90, align: 'center'},
         {field: '基金简称', title: '基金简称', width: 190, align: 'center'},
-        {field: '日期', title: '日期', width: 110, align: 'center'},
-        {field: '近1周', title: '近1周', width: 105, sort: true, align: 'center', templet: function(d) {
-          var value = d['近1周'];
+        {field: '日期', title: '日期', width: 105, align: 'center'},
+        {field: '近1周超额', title: '近1周超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近1周超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近1月', title: '近1月', width: 105, sort: true, align: 'center', templet: function(d) {
-          var value = d['近1月'];
+        {field: '近1月超额', title: '近1月超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近1月超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近3月', title: '近3月', width: 105, sort: true, align: 'center', templet: function(d) {
-          var value = d['近3月'];
+        {field: '近3月超额', title: '近3月超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近3月超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近6月', title: '近6月', width: 105, sort: true, align: 'center', templet: function(d) {
-          var value = d['近6月'];
+        {field: '近6月超额', title: '近6月超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近6月超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近1年', title: '近1年', width: 110, sort: true, align: 'center', templet: function(d) {
-          var value = d['近1年'];
+        {field: '近1年超额', title: '近1年超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近1年超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近2年', title: '近2年', width: 110, sort: true, align: 'center', templet: function(d) {
-          var value = d['近2年'];
+        {field: '近2年超额', title: '近2年超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近2年超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近3年', title: '近3年', width: 110, sort: true, align: 'center', templet: function(d) {
-          var value = d['近3年'];
+        {field: '近3年超额', title: '近3年超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近3年超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '今年来', title: '今年来', width: 110, sort: true, align: 'center', templet: function(d) {
-          var value = d['今年来'];
+        {field: '今年来超额', title: '今年来超额', width: 120, sort: true, align: 'center', templet: function(d) {
+          var value = d['今年来超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '成立时间', title: '成立时间', width: 110, align: 'center'},
+        {field: '成立时间', title: '成立时间', width: 105, align: 'center'},
         {field: '最新规模', title: '最新规模', width: 100, align: 'center'}
       ]],
       done: function(res, curr, count){
@@ -598,7 +802,7 @@
     // 国证2000基金表格
     table.render({
       elem: '#gz2000Table',
-      url: '/get_fund_data?sheet=国证2000基金',
+      url: '/get_fund_data?sheet=国证2000基金_超额',
       page: true,
       limit: 100,
       limits: [100,200],
@@ -610,74 +814,122 @@
         statusCode: 0
       },
       cols: [[
-        {field: '基金代码', title: '基金代码', width: 100, align: 'center'},
+        {field: '基金代码', title: '基金代码', width: 90, align: 'center'},
         {field: '基金简称', title: '基金简称', width: 190, align: 'center'},
-        {field: '日期', title: '日期', width: 110, align: 'center'},
-        {field: '近1周', title: '近1周', width: 105, sort: true, align: 'center', templet: function(d) {
-          var value = d['近1周'];
+        {field: '日期', title: '日期', width: 105, align: 'center'},
+        {field: '近1周超额', title: '近1周超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近1周超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近1月', title: '近1月', width: 105, sort: true, align: 'center', templet: function(d) {
-          var value = d['近1月'];
+        {field: '近1月超额', title: '近1月超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近1月超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近3月', title: '近3月', width: 105, sort: true, align: 'center', templet: function(d) {
-          var value = d['近3月'];
+        {field: '近3月超额', title: '近3月超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近3月超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近6月', title: '近6月', width: 105, sort: true, align: 'center', templet: function(d) {
-          var value = d['近6月'];
+        {field: '近6月超额', title: '近6月超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近6月超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近1年', title: '近1年', width: 110, sort: true, align: 'center', templet: function(d) {
-          var value = d['近1年'];
+        {field: '近1年超额', title: '近1年超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近1年超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近2年', title: '近2年', width: 110, sort: true, align: 'center', templet: function(d) {
-          var value = d['近2年'];
+        {field: '近2年超额', title: '近2年超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近2年超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近3年', title: '近3年', width: 110, sort: true, align: 'center', templet: function(d) {
-          var value = d['近3年'];
+        {field: '近3年超额', title: '近3年超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近3年超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '今年来', title: '今年来', width: 110, sort: true, align: 'center', templet: function(d) {
-          var value = d['今年来'];
+        {field: '今年来超额', title: '今年来超额', width: 120, sort: true, align: 'center', templet: function(d) {
+          var value = d['今年来超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '成立时间', title: '成立时间', width: 110, align: 'center'},
+        {field: '成立时间', title: '成立时间', width: 105, align: 'center'},
         {field: '最新规模', title: '最新规模', width: 100, align: 'center'}
       ]],
       done: function(res, curr, count){
@@ -696,7 +948,7 @@
     // 小微盘基金表格
     table.render({
       elem: '#small_fundTable',
-      url: '/get_fund_data?sheet=小微盘',
+      url: '/get_fund_data?sheet=小微盘_超额',
       page: true,
       limit: 100,
       limits: [100,200],
@@ -708,74 +960,122 @@
         statusCode: 0
       },
       cols: [[
-        {field: '基金代码', title: '基金代码', width: 100, align: 'center'},
+        {field: '基金代码', title: '基金代码', width: 90, align: 'center'},
         {field: '基金简称', title: '基金简称', width: 190, align: 'center'},
-        {field: '日期', title: '日期', width: 110, align: 'center'},
-        {field: '近1周', title: '近1周', width: 105, sort: true, align: 'center', templet: function(d) {
-          var value = d['近1周'];
+        {field: '日期', title: '日期', width: 105, align: 'center'},
+        {field: '近1周超额', title: '近1周超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近1周超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近1月', title: '近1月', width: 105, sort: true, align: 'center', templet: function(d) {
-          var value = d['近1月'];
+        {field: '近1月超额', title: '近1月超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近1月超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近3月', title: '近3月', width: 105, sort: true, align: 'center', templet: function(d) {
-          var value = d['近3月'];
+        {field: '近3月超额', title: '近3月超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近3月超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近6月', title: '近6月', width: 105, sort: true, align: 'center', templet: function(d) {
-          var value = d['近6月'];
+        {field: '近6月超额', title: '近6月超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近6月超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近1年', title: '近1年', width: 110, sort: true, align: 'center', templet: function(d) {
-          var value = d['近1年'];
+        {field: '近1年超额', title: '近1年超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近1年超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近2年', title: '近2年', width: 110, sort: true, align: 'center', templet: function(d) {
-          var value = d['近2年'];
+        {field: '近2年超额', title: '近2年超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近2年超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '近3年', title: '近3年', width: 110, sort: true, align: 'center', templet: function(d) {
-          var value = d['近3年'];
+        {field: '近3年超额', title: '近3年超额', width: 110, sort: true, align: 'center', templet: function(d) {
+          var value = d['近3年超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '今年来', title: '今年来', width: 110, sort: true, align: 'center', templet: function(d) {
-          var value = d['今年来'];
+        {field: '今年来超额', title: '今年来超额', width: 120, sort: true, align: 'center', templet: function(d) {
+          var value = d['今年来超额'];
           if (value === null || value === undefined || value === '') {
             return '';
           }
           // 显示时添加百分号，但不影响排序
-          return value + '%';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) {
+            return '<span class=\"negative-number\">' + formattedValue + '</span>';
+          } else if (parseFloat(value) > 0) {
+            return '<span class=\"positive-number\">' + formattedValue + '</span>';
+          }
+          return formattedValue;
         }},
-        {field: '成立时间', title: '成立时间', width: 110, align: 'center'},
+        {field: '成立时间', title: '成立时间', width: 105, align: 'center'},
         {field: '最新规模', title: '最新规模', width: 100, align: 'center'}
       ]],
       done: function(res, curr, count){
