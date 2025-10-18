@@ -28,7 +28,7 @@ def fetch_fund_data(fund_type):
     # 过滤掉"近3月"为空的数据
     fund_df = fund_df.dropna(subset=['近6月']).copy()
     
-    exclude_keywords = ["红利", "基本面", "价值", "非银", "成长", "低波动","信息技术","周期","非周期","地产"]
+    exclude_keywords = ["红利", "基本面", "价值", "非银", "成长", "低波动","信息技术","周期","非周期","地产","有色","医药","保险","金融"]
     for keyword in tqdm(exclude_keywords):
         fund_df = fund_df[~fund_df["基金简称"].str.contains(keyword, na=False)].copy()
     
@@ -118,7 +118,8 @@ def calculate_excess_returns(writer):
     # 定义基金类型与基准基金代码的映射关系
     benchmark_map = {
         "沪深300": "510300",
-        "中证500": "512510", 
+        "中证500": "512510",
+        "中证800": "515810",
         "中证1000": "516300",
         "中证2000": "563300",
         "国证2000": "159907"
@@ -279,7 +280,7 @@ def update_fund_data():
     # 创建一个ExcelWriter对象
     filename = f'index-fund.xlsx'
     with pd.ExcelWriter(filename, engine='openpyxl') as writer:
-        fund_types = ["沪深300", "中证500", "中证1000", "中证2000","国证2000"]
+        fund_types = ["沪深300", "中证500","中证800", "中证1000", "中证2000","国证2000"]
         for fund_type in fund_types:
             fund_df = fetch_fund_data(fund_type)
             save_to_excel(writer, fund_df, f'{fund_type}基金')
