@@ -174,5 +174,8 @@ def parse_fund_details(data, fund_code):
                 info = tag.get('info', '')
                 if '换手率' in left_title:
                     result['换手率'] = extract_numeric_value(info)
-
-    return result['换手率']
+                elif '持股集中度' in left_title:
+                    result['前10大重仓股占比'] = extract_numeric_value(info)
+                elif '持股行业集中度' in left_title:
+                    result['持股行业集中度'] = info  # 保持原样
+    return result

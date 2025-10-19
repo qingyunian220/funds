@@ -62,7 +62,7 @@ def run_fund_data_update():
                             fund_data[fund_code]["风格因子"][factor_name]["近似指数"] = factor_data["近似指数"]
         # 写入换手率数据
         for fund_code in fund_codes:
-            fund_data[fund_code]['换手率']=parse_fund_data(fund_code)
+            fund_data[fund_code]['换手率']=parse_fund_data(fund_code)['换手率']
         # 写入更新后的数据到文件
         with open(fund_data_file_path, 'w', encoding='utf-8') as f:
             json.dump(fund_data, f, ensure_ascii=False, indent=2)

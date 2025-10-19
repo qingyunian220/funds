@@ -9,6 +9,7 @@ import os
 import json
 import numpy as np
 from openpyxl import load_workbook
+from jiuquan_fund import parse_fund_data
 
 # # Flask应用配置
 # app = Flask(__name__)
@@ -34,6 +35,9 @@ def fetch_fund_data(fund_type):
     
     fund_df.loc[:, "成立时间"] = ""
     fund_df.loc[:, "最新规模"] = ""
+    fund_df.loc[:, "换手率"] = ""
+    fund_df.loc[:, "前10大重仓股占比"] = ""
+    fund_df.loc[:, "持股行业集中度"] = ""
     
     for idx, row in tqdm(fund_df.iterrows(), total=fund_df.shape[0]):
         code = row["基金代码"]
@@ -44,6 +48,16 @@ def fetch_fund_data(fund_type):
             if "最新规模" in info["item"].values:
                 fund_df.loc[idx, "最新规模"] = info.loc[info["item"] == "最新规模", "value"].values[0]
             time.sleep(0.1)
+            
+            # 获取换手率和重仓股信息
+            fund_detail = parse_fund_data(code)
+            if fund_detail:
+                if '换手率' in fund_detail:
+                    fund_df.loc[idx, "换手率"] = fund_detail['换手率']
+                if '前10大重仓股占比' in fund_detail:
+                    fund_df.loc[idx, "前10大重仓股占比"] = fund_detail['前10大重仓股占比']
+                if '持股行业集中度' in fund_detail:
+                    fund_df.loc[idx, "持股行业集中度"] = fund_detail['持股行业集中度']
         except Exception as e:
             print(f"基金代码{code}查询失败: {e}")
     
@@ -62,6 +76,9 @@ def fetch_small_fund_data():
     
     fund_df.loc[:, "成立时间"] = ""
     fund_df.loc[:, "最新规模"] = ""
+    fund_df.loc[:, "换手率"] = ""
+    fund_df.loc[:, "前10大重仓股占比"] = ""
+    fund_df.loc[:, "持股行业集中度"] = ""
     
     for idx, row in tqdm(fund_df.iterrows(), total=fund_df.shape[0]):
         code = row["基金代码"]
@@ -72,6 +89,16 @@ def fetch_small_fund_data():
             if "最新规模" in info["item"].values:
                 fund_df.loc[idx, "最新规模"] = info.loc[info["item"] == "最新规模", "value"].values[0]
             time.sleep(0.1)
+            
+            # 获取换手率和重仓股信息
+            fund_detail = parse_fund_data(code)
+            if fund_detail:
+                if '换手率' in fund_detail:
+                    fund_df.loc[idx, "换手率"] = fund_detail['换手率']
+                if '前10大重仓股占比' in fund_detail:
+                    fund_df.loc[idx, "前10大重仓股占比"] = fund_detail['前10大重仓股占比']
+                if '持股行业集中度' in fund_detail:
+                    fund_df.loc[idx, "持股行业集中度"] = fund_detail['持股行业集中度']
         except Exception as e:
             print(f"基金代码{code}查询失败: {e}")
     
@@ -168,7 +195,7 @@ def calculate_excess_returns(writer):
             else:
                 benchmark_returns[col] = 0
         
-        print(f"基准基金{benchmark_code}收益率: {benchmark_returns}")
+        # print(f"基准基金{benchmark_code}收益率: {benchmark_returns}")
         
         # 计算超额收益率
         for col in return_columns:
@@ -182,7 +209,8 @@ def calculate_excess_returns(writer):
         
         # 只保留指定的列
         columns_to_keep = ["基金代码", "基金简称", "日期", "近1周超额", "近1月超额", "近3月超额", "近6月超额", 
-                          "近1年超额", "近2年超额", "近3年超额", "今年来超额", "成立时间", "最新规模"]
+                          "近1年超额", "近2年超额", "近3年超额", "今年来超额", "成立时间", "最新规模", "换手率",
+                           "前10大重仓股占比", "持股行业集中度"]
         # 检查哪些列实际存在于DataFrame中
         existing_columns = [col for col in columns_to_keep if col in fund_df.columns]
         fund_df = fund_df[existing_columns]
@@ -220,7 +248,7 @@ def calculate_excess_returns(writer):
                 else:
                     benchmark_returns[col] = 0
             
-            print(f"小微盘基准基金{benchmark_code}收益率: {benchmark_returns}")
+            # print(f"小微盘基准基金{benchmark_code}收益率: {benchmark_returns}")
             
             # 计算超额收益率
             for col in return_columns:
@@ -234,7 +262,8 @@ def calculate_excess_returns(writer):
             
             # 只保留指定的列
             columns_to_keep = ["基金代码", "基金简称", "日期", "近1周超额", "近1月超额", "近3月超额", "近6月超额", 
-                              "近1年超额", "近2年超额", "近3年超额", "今年来超额", "成立时间", "最新规模"]
+                              "近1年超额", "近2年超额", "近3年超额", "今年来超额", "成立时间", "最新规模", "换手率",
+                               "前10大重仓股占比", "持股行业集中度"]
             # 检查哪些列实际存在于DataFrame中
             existing_columns = [col for col in columns_to_keep if col in small_fund_df.columns]
             small_fund_df = small_fund_df[existing_columns]
