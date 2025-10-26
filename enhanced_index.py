@@ -1,6 +1,11 @@
+import re
+
 import pandas as pd
 import akshare as ak
 import time
+
+import requests
+from bs4 import BeautifulSoup
 from tqdm import tqdm
 import schedule
 import threading
@@ -18,11 +23,91 @@ from jiuquan_fund import parse_fund_data
 # # 设置Excel文件路径
 # EXCEL_FILE = 'index-fund.xlsx'
 
+def get_fund_info(fund_code):
+    """
+    通过天天基金接口获取基金的成立时间和最新规模（优化版）
+
+    该方法只请求一次基金详情页，并使用 BeautifulSoup 解析 HTML，
+    同时提取成立日期和最新规模，效率更高。
+
+    参数
+    ----------
+    fund_code : str
+        基金代码，如 '001186'
+
+    返回
+    -------
+    dict
+        {
+            '基金代码': str,
+            '成立日期': str,
+            '最新规模': str,
+            '规模日期': str,
+            '错误': str  # 如果获取失败
+        }
+    """
+    result = {
+        '基金代码': fund_code,
+        '成立日期': '获取失败',
+        '最新规模': '获取失败',
+        '规模日期': '获取失败',
+        '错误': None
+    }
+
+    # 请求基金详情页
+    detail_url = f'http://fund.eastmoney.com/{fund_code}.html'
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
+    }
+
+    try:
+        response = requests.get(detail_url, headers=headers, timeout=10)
+        response.encoding = 'utf-8'
+
+        # 如果请求失败（如404），则直接返回
+        if response.status_code != 200:
+            result['错误'] = f"请求失败，状态码: {response.status_code}"
+            return result
+
+        # 使用 BeautifulSoup 解析 HTML
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        # 查找包含基金信息的表格
+        info_table = soup.find('div', class_='infoOfFund')
+        if not info_table:
+            result['错误'] = "未找到基金信息区域（.infoOfFund）"
+            return result
+
+        # 遍历表格中的所有单元格
+        for td in info_table.find_all('td'):
+            td_text = td.get_text(strip=True)
+
+            # 提取成立日期
+            if '成 立 日' in td_text:
+                # 使用正则表达式提取日期，更精确
+                date_match = re.search(r'(\d{4}-\d{2}-\d{2})', td_text)
+                if date_match:
+                    result['成立时间'] = date_match.group(1)
+
+            # 提取规模和规模日期
+            if '规模' in td_text and '亿元' in td_text:
+                # 使用正则表达式提取规模和日期
+                scale_match = re.search(r'([\d.]+)亿元（(\d{4}-\d{2}-\d{2})）', td_text)
+                if scale_match:
+                    result['最新规模'] = f"{scale_match.group(1)}亿元"
+                    result['最新规模日期'] = scale_match.group(2)
+
+    except requests.exceptions.RequestException as e:
+        result['错误'] = f"网络请求错误: {e}"
+    except Exception as e:
+        result['错误'] = f"解析错误: {e}"
+
+    return result
+
 def fetch_fund_data(fund_type):
     """获取指定类型基金数据"""
     # 获取所有基金基础信息
-    fund_open_fund_rank_em_df = ak.fund_open_fund_rank_em(symbol="指数型")
-    
+    fund_open_fund_rank_em_df = ak.fund_open_fund_rank_em(symbol="全部")
     fund_df = fund_open_fund_rank_em_df[fund_open_fund_rank_em_df["基金简称"].str.contains(fund_type, na=False)]
     fund_df = fund_df[fund_df["基金简称"].str.contains("C", na=False)].copy()
 
@@ -42,13 +127,9 @@ def fetch_fund_data(fund_type):
     for idx, row in tqdm(fund_df.iterrows(), total=fund_df.shape[0]):
         code = row["基金代码"]
         try:
-            info = ak.fund_individual_basic_info_xq(symbol=code)
-            if "成立时间" in info["item"].values:
-                fund_df.loc[idx, "成立时间"] = info.loc[info["item"] == "成立时间", "value"].values[0]
-            if "最新规模" in info["item"].values:
-                fund_df.loc[idx, "最新规模"] = info.loc[info["item"] == "最新规模", "value"].values[0]
-            time.sleep(0.1)
-            
+            info = get_fund_info(code)
+            fund_df.loc[idx, "成立时间"] = info['成立时间']
+            fund_df.loc[idx, "最新规模"] = info['最新规模']
             # 获取换手率和重仓股信息
             fund_detail = parse_fund_data(code)
             if fund_detail:
@@ -69,7 +150,7 @@ def fetch_small_fund_data():
     small_funds_df = pd.read_excel('small_funds.xlsx', dtype={'code': str})
     
     # 获取所有基金基础信息
-    fund_open_fund_rank_em_df = ak.fund_open_fund_rank_em(symbol="混合型")
+    fund_open_fund_rank_em_df = ak.fund_open_fund_rank_em(symbol="全部")
     
     # 筛选出在small_funds.xlsx中的基金
     fund_df = fund_open_fund_rank_em_df[fund_open_fund_rank_em_df["基金代码"].isin(small_funds_df["code"])].copy()
@@ -151,14 +232,11 @@ def calculate_excess_returns(writer):
         "中证2000": "563300",
         "国证2000": "159907"
     }
-    
     # 定义收益率列
     return_columns = ['近1周', '近1月', '近3月', '近6月', '近1年', '近2年', '近3年', '今年来']
-    
     # 获取基金排名数据
     fund_exchange_rank_em_df = ak.fund_exchange_rank_em()
     fund_open_fund_rank_em_df = ak.fund_open_fund_rank_em(symbol="混合型")
-    
     # 为每种基金类型计算超额收益率
     for fund_type, benchmark_code in benchmark_map.items():
         print(f"正在处理{fund_type}基金的超额收益率，基准基金代码：{benchmark_code}")
@@ -194,8 +272,6 @@ def calculate_excess_returns(writer):
                         benchmark_returns[col] = pd.to_numeric(value, errors='coerce') / 100
             else:
                 benchmark_returns[col] = 0
-        
-        # print(f"基准基金{benchmark_code}收益率: {benchmark_returns}")
         
         # 计算超额收益率
         for col in return_columns:
