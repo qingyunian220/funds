@@ -178,16 +178,46 @@
         }
       });
       
-      // 找出在所有四个时间段都排名前十的基金代码
+      // 找出在所有时间段都排名前十的基金代码
       var consistentlyTop10Codes = [];
       res.data.forEach(function(fund) {
         var fundCode = fund['基金代码'];
-        var isInAllTop10 = periods.every(function(period) {
-          return top10CodesByPeriod[period].includes(fundCode);
+        var countInTop10 = 0;
+        var validPeriods = 0;
+        var negativePeriods = 0;
+        
+        periods.forEach(function(period) {
+          // 只有当该基金在该时间段有有效数据时才计入统计
+          if (fund[period] !== null && fund[period] !== undefined && fund[period] !== '') {
+            validPeriods++;
+            if (parseFloat(fund[period]) < 0) {
+              negativePeriods++;
+            }
+            if (top10CodesByPeriod[period].includes(fundCode)) {
+              countInTop10++;
+            }
+          }
         });
         
-        if (isInAllTop10) {
-          consistentlyTop10Codes.push(fundCode);
+        // 只有当基金在所有有效时间段都在前10名，且至少在一个时间段有数据时才标黄
+        // 同时确保基金确实在每个有效时间段都被评为前10（而不是因为总共就几只基金）
+        // 对于基金数量少于等于10的情况，我们设置更高的门槛：必须在至少4个时间段进入前10名
+        if (validPeriods > 0 && countInTop10 === validPeriods && validPeriods >= 3) {
+          // 新增条件：如果有一半以上的时间段为负数则不标黄
+          if (negativePeriods > validPeriods / 2) {
+            return; // 跳过此基金
+          }
+          
+          // 对于基金数量少于等于10的情况，进一步筛选，只标黄那些在多数时间段表现优异的基金
+          if (res.data.length <= 10) {
+            // 在小样本情况下，要求基金在更多时间段表现优异
+            if (countInTop10 >= 4) {
+              consistentlyTop10Codes.push(fundCode);
+            }
+          } else {
+            // 对于基金数量大于10的情况，保持原有逻辑
+            consistentlyTop10Codes.push(fundCode);
+          }
         }
       });
       
@@ -199,7 +229,7 @@
           // 获取该行第一个单元格（基金代码）
           var fundCode = $row.find('td').eq(0).text().trim();
           
-          // 如果基金代码在所有四个时间段都排名前十，则添加标色样式
+          // 如果基金代码在所有有效时间段都排名前十，则添加标色样式
           if (consistentlyTop10Codes.includes(fundCode)) {
             $row.find('td').addClass('top-10');
           }
