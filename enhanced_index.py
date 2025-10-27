@@ -164,13 +164,9 @@ def fetch_small_fund_data():
     for idx, row in tqdm(fund_df.iterrows(), total=fund_df.shape[0]):
         code = row["基金代码"]
         try:
-            info = ak.fund_individual_basic_info_xq(symbol=code)
-            if "成立时间" in info["item"].values:
-                fund_df.loc[idx, "成立时间"] = info.loc[info["item"] == "成立时间", "value"].values[0]
-            if "最新规模" in info["item"].values:
-                fund_df.loc[idx, "最新规模"] = info.loc[info["item"] == "最新规模", "value"].values[0]
-            time.sleep(0.1)
-            
+            info = get_fund_info(code)
+            fund_df.loc[idx, "成立时间"] = info['成立时间']
+            fund_df.loc[idx, "最新规模"] = info['最新规模']
             # 获取换手率和重仓股信息
             fund_detail = parse_fund_data(code)
             if fund_detail:
@@ -227,6 +223,7 @@ def calculate_excess_returns(writer):
     benchmark_map = {
         "沪深300": "510300",
         "中证500": "512510",
+        "A500":"563360",
         "中证800": "515810",
         "中证1000": "516300",
         "中证2000": "563300",
@@ -385,7 +382,7 @@ def update_fund_data():
     # 创建一个ExcelWriter对象
     filename = f'index-fund.xlsx'
     with pd.ExcelWriter(filename, engine='openpyxl') as writer:
-        fund_types = ["沪深300", "中证500","中证800", "中证1000", "中证2000","国证2000"]
+        fund_types = ["沪深300", "中证500","A500","中证800", "中证1000", "中证2000","国证2000"]
         for fund_type in fund_types:
             fund_df = fetch_fund_data(fund_type)
             save_to_excel(writer, fund_df, f'{fund_type}基金')
