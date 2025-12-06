@@ -14,6 +14,9 @@ import os
 import json
 import numpy as np
 from openpyxl import load_workbook
+
+from fund_data_processor import get_fund_name_by_code
+from fund_search_parser import fetch_and_parse_fund_search
 from jiuquan_fund import parse_fund_data
 
 # # Flask应用配置
@@ -48,9 +51,9 @@ def get_fund_info(fund_code):
     """
     result = {
         '基金代码': fund_code,
-        '成立日期': '获取失败',
-        '最新规模': '获取失败',
-        '规模日期': '获取失败',
+        '成立日期': '',
+        '最新规模': '',
+        '规模日期': '',
         '错误': None
     }
 
@@ -88,7 +91,6 @@ def get_fund_info(fund_code):
                 date_match = re.search(r'(\d{4}-\d{2}-\d{2})', td_text)
                 if date_match:
                     result['成立时间'] = date_match.group(1)
-
             # 提取规模和规模日期
             if '规模' in td_text and '亿元' in td_text:
                 # 使用正则表达式提取规模和日期
@@ -126,10 +128,43 @@ def fetch_fund_data(fund_type):
     
     for idx, row in tqdm(fund_df.iterrows(), total=fund_df.shape[0]):
         code = row["基金代码"]
+        # 1. 根据基金代码查找基金名称
+        fund_name = get_fund_name_by_code(str(code))
+        if not fund_name:
+            print(f"无法获取基金 {code} 的名称")
+            return None
+        print(f"基金名称: {fund_name}")
+        base_name = fund_name
+        if fund_name.endswith('A') or fund_name.endswith('C'):
+            base_name = fund_name[:-1]
+        # 2. 根据基金名称查找对应的基金代码(A+C)
+        # [{'code': '015381', 'name': '东方兴瑞趋势领航混合A'}, {'code': '015382', 'name': '东方兴瑞趋势领航混合C'}]
+        code_names = fetch_and_parse_fund_search(base_name)
+        # 3. 获取A类和C类基金的规模数据
+        for code_name in code_names:
+            info = get_fund_info(code_name['code'])
+            # 解析并累加规模数据
+            scale_match = re.search(r'([\d.]+)亿元', info['最新规模'])
+            if scale_match:
+                scale_value = float(scale_match.group(1))
+                # 如果当前值是空字符串，则初始化为0
+                current_scale = fund_df.loc[idx, "最新规模"]
+                if current_scale is not None == "":
+                    current_scale = 0
+                else:
+                    # 提取当前值中的数字部分
+                    current_match = re.search(r'([\d.]+)亿元', str(current_scale))
+                    if current_match:
+                        current_scale = float(current_match.group(1))
+                    else:
+                        current_scale = 0
+                # 累加规模值
+                new_scale = current_scale + scale_value
+                fund_df.loc[idx, "最新规模"] = f"{new_scale:.2f}亿元"
         try:
             info = get_fund_info(code)
             fund_df.loc[idx, "成立时间"] = info['成立时间']
-            fund_df.loc[idx, "最新规模"] = info['最新规模']
+            # fund_df.loc[idx, "最新规模"] = info['最新规模']
             # 获取换手率和重仓股信息
             fund_detail = parse_fund_data(code)
             if fund_detail:
@@ -163,10 +198,44 @@ def fetch_small_fund_data():
     
     for idx, row in tqdm(fund_df.iterrows(), total=fund_df.shape[0]):
         code = row["基金代码"]
+        # 1. 根据基金代码查找基金名称
+        fund_name = get_fund_name_by_code(str(code))
+        if not fund_name:
+            print(f"无法获取基金 {code} 的名称")
+            return None
+        print(f"基金名称: {fund_name}")
+        base_name = fund_name
+        if fund_name.endswith('A') or fund_name.endswith('C'):
+            base_name = fund_name[:-1]
+        # 2. 根据基金名称查找对应的基金代码(A+C)
+        # [{'code': '015381', 'name': '东方兴瑞趋势领航混合A'}, {'code': '015382', 'name': '东方兴瑞趋势领航混合C'}]
+        code_names = fetch_and_parse_fund_search(base_name)
+        # 3. 获取A类和C类基金的规模数据
+        for code_name in code_names:
+            info = get_fund_info(code_name['code'])
+
+            # 解析并累加规模数据
+            scale_match = re.search(r'([\d.]+)亿元', info['最新规模'])
+            if scale_match:
+                scale_value = float(scale_match.group(1))
+                # 如果当前值是空字符串，则初始化为0
+                current_scale = fund_df.loc[idx, "最新规模"]
+                if current_scale is not None == "":
+                    current_scale = 0
+                else:
+                    # 提取当前值中的数字部分
+                    current_match = re.search(r'([\d.]+)亿元', str(current_scale))
+                    if current_match:
+                        current_scale = float(current_match.group(1))
+                    else:
+                        current_scale = 0
+                # 累加规模值
+                new_scale = current_scale + scale_value
+                fund_df.loc[idx, "最新规模"] = f"{new_scale:.2f}亿元"
         try:
             info = get_fund_info(code)
             fund_df.loc[idx, "成立时间"] = info['成立时间']
-            fund_df.loc[idx, "最新规模"] = info['最新规模']
+            # fund_df.loc[idx, "最新规模"] = info['最新规模']
             # 获取换手率和重仓股信息
             fund_detail = parse_fund_data(code)
             if fund_detail:
@@ -379,34 +448,43 @@ def update_fund_data():
     """更新基金数据的函数"""
     print(f"开始更新基金数据: {time.strftime('%Y-%m-%d %H:%M:%S')}")
     
-    # 创建一个ExcelWriter对象
-    filename = f'index-fund.xlsx'
-    with pd.ExcelWriter(filename, engine='openpyxl') as writer:
-        fund_types = ["沪深300", "中证500","A500","中证800", "中证1000", "中证2000","国证2000"]
-        for fund_type in fund_types:
-            fund_df = fetch_fund_data(fund_type)
-            save_to_excel(writer, fund_df, f'{fund_type}基金')
-        
-        # 添加小微盘基金数据
-        small_fund_df = fetch_small_fund_data()
-        save_to_excel(writer, small_fund_df, '小微盘')
-    
-    # 计算超额收益率并保存到新的工作表
-    with pd.ExcelWriter(filename, engine='openpyxl', mode='a') as writer:
-        calculate_excess_returns(writer)
-    
-    # 调整列宽
     try:
-        adjust_column_width(filename)
+        # 创建一个ExcelWriter对象
+        filename = f'index-fund.xlsx'
+        with pd.ExcelWriter(filename, engine='openpyxl') as writer:
+            fund_types = ["沪深300", "中证500","A500","中证800", "中证1000", "中证2000","国证2000"]
+            for fund_type in fund_types:
+                fund_df = fetch_fund_data(fund_type)
+                save_to_excel(writer, fund_df, f'{fund_type}基金')
+            
+            # 添加小微盘基金数据
+            small_fund_df = fetch_small_fund_data()
+            save_to_excel(writer, small_fund_df, '小微盘')
+        
+        # 计算超额收益率并保存到新的工作表
+        with pd.ExcelWriter(filename, engine='openpyxl', mode='a') as writer:
+            calculate_excess_returns(writer)
+        
+        # 调整列宽
+        try:
+            adjust_column_width(filename)
+        except Exception as e:
+            print(f"调整列宽时出错: {e}")
+        
+        print(f"已将所有C份额基金的排序结果保存为'{filename}'，每个时间段的前10名标黄，至少有4个时间段进入前10的基金其简称标金黄色。")
+        print(f"基金数据更新完成: {time.strftime('%Y-%m-%d %H:%M:%S')}")
     except Exception as e:
-        print(f"调整列宽时出错: {e}")
-    
-    print(f"已将所有C份额基金的排序结果保存为'{filename}'，每个时间段的前10名标黄，至少有4个时间段进入前10的基金其简称标金黄色。")
+        print(f"更新基金数据时发生错误: {e}")
+        import traceback
+        traceback.print_exc()
 
 def run_scheduler():
     """运行定时任务"""
     while True:
-        schedule.run_pending()
+        try:
+            schedule.run_pending()
+        except Exception as e:
+            print(f"调度器运行时发生错误: {e}")
         time.sleep(60)  # 每分钟检查一次
 
 
@@ -424,6 +502,15 @@ def start_scheduler():
     # 在单独的线程中运行定时任务
     scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
     scheduler_thread.start()
+    
+    # 保持主线程运行
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("程序已被用户中断")
+    except Exception as e:
+        print(f"主线程发生错误: {e}")
 
 if __name__ == '__main__':
     # 启动定时任务
