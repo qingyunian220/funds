@@ -9,13 +9,14 @@ from fund_search_parser import fetch_and_parse_fund_search
 from jiuquan_fund import parse_fund_data
 
 def analyze_funds():
-    zzqz ={"近3年":17.02,"近2年":21.91,"近1年":18.17,"今年来":18.06,"近6月":17.54,"近3月":-0.21,"近1月":-2.84,"近1周":-4.49}
+    zzqz ={"近3年":17.06,"近2年":30.60,"近1年":18.33,"今年来":20.69,"近6月":18.66,"近3月":-1.65,"近1月":-2.23,"近1周":-1.30}
 
     fund_open_fund_rank_em_df = ak.fund_open_fund_rank_em(symbol="全部")
     # 过滤掉"近3月"为空的数据
     fund_open_fund_rank_em_df = fund_open_fund_rank_em_df.dropna(subset=['近6月']).copy()
     # 筛选fund_open_fund_rank_em_df中近1年和近6月都大于zzqz的基金
-    exclude_keywords = ["持有","A"]
+    exclude_keywords = ["持有","A","通信","期货","有色","黄金","半导体","芯片","云计算","商品","创业板","中证资源","电信","物联网","工程机械","医药生物","稀有金属","科创板",
+                        "科创创业","人工智能","上海金","TMT","指数","可转债","债券","化工","碳中和","ESG"]
     for keyword in tqdm(exclude_keywords):
         fund_open_fund_rank_em_df = fund_open_fund_rank_em_df[~fund_open_fund_rank_em_df["基金简称"].str.contains(keyword, na=False)].copy()
     
@@ -46,15 +47,30 @@ def analyze_funds():
         if not fund_name:
             print(f"无法获取基金 {code} 的名称")
             return None
-        print(f"基金名称: {fund_name}")
+        print(f"基金名称: {fund_name} 基金代码: {code}")
         base_name = fund_name
         if fund_name.endswith('A') or fund_name.endswith('C'):
             base_name = fund_name[:-1]
         # 2. 根据基金名称查找对应的基金代码(A+C)
         # [{'code': '015381', 'name': '东方兴瑞趋势领航混合A'}, {'code': '015382', 'name': '东方兴瑞趋势领航混合C'}]
         code_names = fetch_and_parse_fund_search(base_name)
+        
+        # 检查返回结果是否为错误信息或者不是预期的列表格式
+        if isinstance(code_names, dict) and 'error' in code_names:
+            print(f"获取基金 {base_name} 搜索结果失败: {code_names.get('error_message', '未知错误')}")
+            continue
+            
+        if not isinstance(code_names, list):
+            print(f"基金 {base_name} 搜索结果格式异常: {type(code_names)}")
+            continue
+            
         # 3. 获取A类和C类基金的规模数据
         for code_name in code_names:
+            # 确保code_name是一个字典并且包含'code'键
+            if not isinstance(code_name, dict) or 'code' not in code_name:
+                print(f"基金代码信息格式异常: {code_name}")
+                continue
+                
             info = get_fund_info(code_name['code'])
 
             # 解析并累加规模数据
