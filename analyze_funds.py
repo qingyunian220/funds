@@ -19,7 +19,7 @@ def get_top10_stocks_weight_robust(fund_code):
 
     # 尝试不同方法获取数据
     fund_portfolio_hold_em_df = None
-    
+
     # 方法1: 直接使用akshare，处理可能的编码错误
     try:
         fund_portfolio_hold_em_df = ak.fund_portfolio_hold_em(symbol=fund_code, date=current_year)
@@ -34,7 +34,7 @@ def get_top10_stocks_weight_robust(fund_code):
     if fund_portfolio_hold_em_df is None or fund_portfolio_hold_em_df.empty:
         print(f"{current_year}年和{previous_year}年数据都为空")
         return None
-    
+
     print("原始数据:")
     print(fund_portfolio_hold_em_df)
 
@@ -49,7 +49,7 @@ def get_top10_stocks_weight_robust(fund_code):
         else:
             print("找不到季度列")
             return None
-    
+
     print(f"\n所有季度: {quarters}")
 
     # 确定最新的季度
@@ -77,7 +77,7 @@ def get_top10_stocks_weight_robust(fund_code):
         if '占净值比例' in str(col) or '净值比例' in str(col) or str(col).endswith('净值比例'):
             proportion_col = col
             break
-    
+
     # 如果还是找不到，尝试使用列索引（通常是第4列，索引为3）
     if proportion_col is None:
         try:
@@ -85,7 +85,7 @@ def get_top10_stocks_weight_robust(fund_code):
         except IndexError:
             print("无法确定占净值比例列")
             return None
-    
+
     # 计算前十大重仓股的占净值比例之和
     try:
         weight_sum = top_10_stocks[proportion_col].sum()
@@ -94,7 +94,7 @@ def get_top10_stocks_weight_robust(fund_code):
         return None
 
     print(f"\n前十大重仓股占净值比例之和: {weight_sum:.2f}%")
-    
+
     return weight_sum
 
 def analyze_funds():
@@ -120,7 +120,7 @@ def analyze_funds():
     fund_open_fund_rank_em_df.loc[:, "近6月超额"] = fund_open_fund_rank_em_df["近6月"] - zzqz["近6月"]
     fund_open_fund_rank_em_df.loc[:, "近3月超额"] = fund_open_fund_rank_em_df["近3月"] - zzqz["近3月"]
     fund_open_fund_rank_em_df.loc[:, "近1月超额"] = fund_open_fund_rank_em_df["近1月"] - zzqz["近1月"]
-    
+
     fund_open_fund_rank_em_df.loc[:, "成立时间"] = ""
     fund_open_fund_rank_em_df.loc[:, "最新规模"] = ""
     fund_open_fund_rank_em_df.loc[:, "换手率"] = ""
@@ -198,7 +198,7 @@ def analyze_funds():
                     fund_open_fund_rank_em_df.at[idx, "前10大重仓股占比"] = fund_detail['前10大重仓股占比']
                 if '持股行业集中度' in fund_detail:
                     fund_open_fund_rank_em_df.at[idx, "持股行业集中度"] = fund_detail['持股行业集中度']
-            
+
             # 如果九泉数据API没有返回前10大重仓股占比，尝试使用akshare获取
             if pd.isna(fund_open_fund_rank_em_df.at[idx, "前10大重仓股占比"]) or fund_open_fund_rank_em_df.at[idx, "前10大重仓股占比"] == "":
                 top10_weight = get_top10_stocks_weight_robust(code)
@@ -254,7 +254,7 @@ def analyze_funds():
     fund_open_fund_rank_em_df = fund_open_fund_rank_em_df[
         fund_open_fund_rank_em_df["前10大重仓股占比"].apply(filter_by_top10_holdings)
     ].copy()
-    
+
     # 按照比例关系筛选超额收益
     # 如果近1年超额收益是20%，则近6月超额收益要大于10%，近3月超额收益要大于5%，近1月超额收益要大于1.6%
     def filter_by_excess_return_ratio(row):
@@ -263,24 +263,24 @@ def analyze_funds():
         excess_6m = row["近6月超额"]
         excess_3m = row["近3月超额"]
         excess_1m = row["近1月超额"]
-        
+
         # 如果近1年超额收益大于0，应用比例筛选规则
         if excess_1y > 0:
             # 计算比例阈值
             threshold_6m = excess_1y * 0.5  # 6个月相对于1年的比例
             threshold_3m = excess_1y * 0.25  # 3个月相对于1年的比例
             threshold_1m = excess_1y * 0.08  # 1个月相对于1年的比例（按年化估算）
-            
+
             # 检查是否满足比例关系
             return excess_6m >= threshold_6m and excess_3m >= threshold_3m and excess_1m >= threshold_1m
         else:
             # 如果近1年超额收益不大于0，则不应用比例筛选规则，保留基金
             return True
-    
+
     fund_open_fund_rank_em_df = fund_open_fund_rank_em_df[
         fund_open_fund_rank_em_df.apply(filter_by_excess_return_ratio, axis=1)
     ].copy()
-    
+
     fund_open_fund_rank_em_df.to_excel("fund_open_fund_rank_em.xlsx")
     
 
