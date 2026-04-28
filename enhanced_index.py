@@ -116,7 +116,7 @@ def fetch_fund_data(fund_type):
     # 过滤掉"近6月"为空的数据
     fund_df = fund_df.dropna(subset=['近6月']).copy()
 
-    exclude_keywords = ["红利", "基本面", "价值", "非银", "成长", "低波动","信息技术","周期","非周期","地产","有色","医药","保险","金融","持有"]
+    exclude_keywords = ["红利", "基本面", "价值", "非银", "成长", "低波动","信息技术","周期","非周期","地产","有色","医药","保险","金融","持有","自由现金流"]
     for keyword in tqdm(exclude_keywords, desc="过滤关键词"):
         fund_df = fund_df[~fund_df["基金简称"].str.contains(keyword, na=False)].copy()
 

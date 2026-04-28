@@ -98,7 +98,7 @@ def get_top10_stocks_weight_robust(fund_code):
     return weight_sum
 
 def analyze_funds():
-    zzqz ={"近3年":24.44,"近2年":33.86,"近1年":21.80,"今年来":21.80,"近6月":19.48,"近3月":0.74,"近1月":3.25,"近1周":1.50}
+    zzqz ={"近3年":25.33,"近2年":49.90,"近1年":33.97,"今年来":5.95,"近6月":8.63,"近3月":-1.35,"近1月":9.57}
 
     fund_open_fund_rank_em_df = ak.fund_open_fund_rank_em(symbol="全部")
     # 过滤掉"近3月"为空的数据
@@ -133,7 +133,7 @@ def analyze_funds():
             return True  # 保留空值
         if "%" in turnover_str:
             turnover_value = float(turnover_str.replace("%", ""))
-            return turnover_value >= 200  # 保留换手率大于等于200%的基金
+            return turnover_value >= 300  # 保留换手率大于等于200%的基金
         return False  # 默认不保留
     
     for idx, row in tqdm(fund_open_fund_rank_em_df.iterrows(), total=fund_open_fund_rank_em_df.shape[0]):
@@ -222,17 +222,17 @@ def analyze_funds():
         try:
             if "亿" in scale_str:
                 scale_value = float(scale_str.replace("亿", ""))
-                # 保留2000万(0.2亿)到40亿之间的基金
-                return 0.2 <= scale_value <= 40
+                # 保留500万(0.05亿)到10亿之间的基金
+                return 0.2 <= scale_value <= 10
             elif "万" in scale_str:
                 scale_value = float(scale_str.replace("万", ""))
-                # 2000万 = 0.2亿，只保留大于等于2000万的基金
-                return scale_value >= 2000
+                # 500万 = 0.05亿，只保留大于等于500万的基金
+                return scale_value >= 500
             else:
                 # 处理类似"0.39元"这样的数据
                 scale_value = float(re.search(r'[\d.]+', scale_str).group())
                 # 假设没有单位标识的数字是以亿元为单位
-                return 0.2 <= scale_value <= 40
+                return 0.05 <= scale_value <= 10
         except (ValueError, AttributeError):
             # 如果解析失败，保留该基金
             return True
@@ -251,9 +251,9 @@ def analyze_funds():
             return holdings_value < 40  # 保留占比小于40%的基金
         return False  # 默认不保留
     
-    fund_open_fund_rank_em_df = fund_open_fund_rank_em_df[
-        fund_open_fund_rank_em_df["前10大重仓股占比"].apply(filter_by_top10_holdings)
-    ].copy()
+    # fund_open_fund_rank_em_df = fund_open_fund_rank_em_df[
+    #     fund_open_fund_rank_em_df["前10大重仓股占比"].apply(filter_by_top10_holdings)
+    # ].copy()
 
     # 按照比例关系筛选超额收益
     # 如果近1年超额收益是20%，则近6月超额收益要大于10%，近3月超额收益要大于5%，近1月超额收益要大于1.6%
