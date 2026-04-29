@@ -21,27 +21,39 @@ def get_fund_name_by_code(fund_code: str) -> Optional[str]:
         str: 基金名称，如果获取失败则返回None
     """
     try:
-        # # 使用akshare获取基金基本信息
-        # fund_info = ak.fund_individual_basic_info_xq(symbol=fund_code)
-        # # 提取基金名称
-        # fund_name_row = fund_info[fund_info['item'] == '基金名称']
-        # if not fund_name_row.empty:
-        #     return fund_name_row['value'].iloc[0]
-        # 读取jiuquaner_with_names.xlsx文件
-        fund_list = pd.read_excel('fund_list.xlsx')
-        # 确保基金代码列是字符串类型，并且是6位数格式
-        fund_list['基金代码'] = fund_list['基金代码'].astype(str).str.zfill(6)
-        # 通过fund_list中的code列匹配fund_code 得到fund_name
-        a = fund_list[fund_list['基金代码'] == fund_code]
-        fund_name = fund_list[fund_list['基金代码'] == fund_code]['基金简称']
-        # 只获取基金名称字符串
-        if not fund_name.empty:
-            fund_name_str = fund_name.iloc[0]
-            return fund_name_str
+        # 使用 akshare 获取基金基本信息
+        fund_info = ak.fund_individual_basic_info_xq(symbol=fund_code)
+        # 提取基金名称
+        fund_name_row = fund_info[fund_info['item'] == '基金简称']
+        if not fund_name_row.empty:
+            return fund_name_row['value'].iloc[0]
         else:
-            print("未找到匹配的基金")
+            # 尝试查找基金名称
+            fund_name_row = fund_info[fund_info['item'] == '基金名称']
+            if not fund_name_row.empty:
+                return fund_name_row['value'].iloc[0]
     except Exception as e:
-        print(f"获取基金 {fund_code} 名称时出错: {e}")
+        try:
+            # 备用方法：使用天天基金接口
+            url = f'http://fund.eastmoney.com/{fund_code}.html'
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            import requests
+            from bs4 import BeautifulSoup
+            response = requests.get(url, headers=headers, timeout=10)
+            response.encoding = 'utf-8'
+            soup = BeautifulSoup(response.text, 'html.parser')
+            title_tag = soup.find('title')
+            if title_tag:
+                title_text = title_tag.get_text()
+                # 提取基金名称（格式通常是 "基金名称(基金代码)_基金概况_天天基金网"）
+                import re
+                match = re.search(r'^(.*?)\(', title_text)
+                if match:
+                    return match.group(1).strip()
+        except Exception as e2:
+            print(f"获取基金 {fund_code} 名称时出错: {e}")
     return None
 
 
