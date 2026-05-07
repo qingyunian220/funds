@@ -11,6 +11,7 @@ from urllib3.util.retry import Retry
 import gzip
 import zlib
 import brotli
+import akshare as ak
 
 # 基金规模：https://apiv2.jiucaishuo.com/funddetail/detail/fund-scale-change
 # 资产分布：https://api.jiucaishuo.com/fundetail/fund-position/fundinvest
@@ -24,6 +25,57 @@ HEADER_JIUQUAN = {
     'Connection': 'keep-alive',
     'Referer': 'https://apiv2.jiucaishuo.com/'
 }
+
+
+def get_industry_concentration_from_akshare(fund_code):
+    """
+    通过AKShare获取基金的行业配置数据，并获取第一大持仓行业占比
+    
+    参数
+    ------
+    fund_code : str
+        基金代码
+        
+    返回
+    ------
+    str or None
+        第一大持仓行业占比（百分比字符串），获取失败返回None
+    """
+    try:
+        # 调用AKShare的行业配置接口
+        industry_df = ak.fund_portfolio_industry_allocation_em(symbol=fund_code)
+        
+        if industry_df.empty:
+            return None
+            
+        # 获取最新一期的数据（第一行）
+        latest_data = industry_df.iloc[0]
+        
+        # 获取所有行业占比列（排除报告期列）
+        industry_cols = [col for col in industry_df.columns if col not in ['报告期']]
+        
+        # 提取行业占比
+        industry_ratios = []
+        for col in industry_cols:
+            ratio = latest_data[col]
+            if pd.notna(ratio) and ratio > 0:
+                industry_ratios.append(ratio)
+        
+        if not industry_ratios:
+            return None
+            
+        # 按降序排序
+        industry_ratios.sort(reverse=True)
+        
+        # 取第一大行业的占比
+        top1_ratio = industry_ratios[0]
+        
+        # 返回百分比格式，例如：'第一大持仓行业占比87.36%'
+        return f"第一大持仓行业占比{top1_ratio:.2f}%"
+        
+    except Exception as e:
+        # print(f"AKShare获取基金 {fund_code} 行业集中度失败: {e}")
+        return None
 
 def create_session():
     """
@@ -178,4 +230,11 @@ def parse_fund_details(data, fund_code):
                     result['前10大重仓股占比'] = extract_numeric_value(info)
                 elif '持股行业集中度' in left_title:
                     result['持股行业集中度'] = info  # 保持原样
+    
+    # 如果久财说没有返回持股行业集中度，尝试从AKShare获取
+    if '持股行业集中度' not in result or not result['持股行业集中度']:
+        akshare_result = get_industry_concentration_from_akshare(fund_code)
+        if akshare_result:
+            result['持股行业集中度'] = akshare_result
+    
     return result
