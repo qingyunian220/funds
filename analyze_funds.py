@@ -552,8 +552,12 @@ def analyze_funds():
     
     # 使用openpyxl优化Excel格式
     
+    # 生成带日期的文件名
+    current_date = datetime.now().strftime('%Y年%m月%d日')
+    dated_filename = f"量化基金周报_{current_date}.xlsx"
+    
     # 保存到两个文件
-    output_files = ["step11_最终结果.xlsx", "fund_open_fund_rank_em.xlsx"]
+    output_files = ["step11_最终结果.xlsx", dated_filename]
     
     for file in output_files:
         df_export.to_excel(file, index=False)
