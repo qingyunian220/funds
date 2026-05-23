@@ -1,4 +1,5 @@
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pandas as pd
 import akshare as ak
@@ -555,19 +556,41 @@ def update_fund_data():
         # 先获取所有基金筛选结果，但不保存到Excel
         fund_types = ["沪深300", "中证500","A500","中证800", "中证1000", "中证2000","国证2000"]
         all_fund_codes = []
-        for fund_type in fund_types:
-            fund_df = fetch_fund_data(fund_type)
-            if fund_df is not None and not fund_df.empty:
-                temp_data[f'{fund_type}基金'] = fund_df
-                all_fund_codes.extend(fund_df['基金代码'].tolist())
-                has_data = True
         
-        # 添加小微盘基金
-        small_fund_df = fetch_small_fund_data()
-        if small_fund_df is not None and not small_fund_df.empty:
-            temp_data['小微盘'] = small_fund_df
-            all_fund_codes.extend(small_fund_df['基金代码'].tolist())
-            has_data = True
+        # 使用多线程并行处理不同类型的基金数据
+        print(f"开始并行处理 {len(fund_types)} 种指数基金和小微盘基金...")
+        
+        def process_fund_type(fund_type):
+            """处理单个基金类型的函数"""
+            return fund_type, fetch_fund_data(fund_type)
+        
+        with ThreadPoolExecutor(max_workers=len(fund_types) + 1) as executor:
+            # 提交所有指数基金任务
+            futures = {executor.submit(process_fund_type, ft): ft for ft in fund_types}
+            # 提交小微盘基金任务
+            small_future = executor.submit(fetch_small_fund_data)
+            
+            # 处理指数基金结果
+            for future in as_completed(futures):
+                fund_type = futures[future]
+                try:
+                    _, fund_df = future.result()
+                    if fund_df is not None and not fund_df.empty:
+                        temp_data[f'{fund_type}基金'] = fund_df
+                        all_fund_codes.extend(fund_df['基金代码'].tolist())
+                        has_data = True
+                except Exception as e:
+                    print(f"处理{fund_type}基金时出错: {e}")
+            
+            # 处理小微盘基金结果
+            try:
+                small_fund_df = small_future.result()
+                if small_fund_df is not None and not small_fund_df.empty:
+                    temp_data['小微盘'] = small_fund_df
+                    all_fund_codes.extend(small_fund_df['基金代码'].tolist())
+                    has_data = True
+            except Exception as e:
+                print(f"处理小微盘基金时出错: {e}")
         
         # 收集所有需要市值评分的基金代码
         if all_fund_codes:
