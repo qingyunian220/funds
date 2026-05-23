@@ -2,17 +2,405 @@ import re
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import json
+import re
+import requests
+from typing import Dict, List, Optional, Any
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+import gzip
+import zlib
+import brotli
 import pandas as pd
 import akshare as ak
 from datetime import datetime, timedelta
 from tqdm import tqdm
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment
-from enhanced_index import get_fund_info
-from fund_data_processor import get_fund_name_by_code
-from fund_search_parser import fetch_and_parse_fund_search
-from jiuquan_fund import parse_fund_data
+from bs4 import BeautifulSoup
 
+HEADER_JIUQUAN = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    'Content-Type': 'application/json',
+    'Accept': 'application/json, text/plain, */*',
+    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Connection': 'keep-alive',
+    'Referer': 'https://apiv2.jiucaishuo.com/'
+}
+
+
+def get_industry_concentration_from_akshare(fund_code):
+    """
+    通过AKShare获取基金的行业配置数据，并获取第一大持仓行业占比
+
+    参数
+    ------
+    fund_code : str
+        基金代码
+
+    返回
+    ------
+    str or None
+        第一大持仓行业占比（百分比字符串），获取失败返回None
+    """
+    try:
+        # 调用AKShare的行业配置接口
+        industry_df = ak.fund_portfolio_industry_allocation_em(symbol=fund_code)
+
+        if industry_df.empty:
+            return None
+
+        # 获取最新一期的数据（第一行）
+        latest_data = industry_df.iloc[0]
+
+        # 获取所有行业占比列（排除报告期列）
+        industry_cols = [col for col in industry_df.columns if col not in ['报告期']]
+
+        # 提取行业占比
+        industry_ratios = []
+        for col in industry_cols:
+            ratio = latest_data[col]
+            if pd.notna(ratio) and ratio > 0:
+                industry_ratios.append(ratio)
+
+        if not industry_ratios:
+            return None
+
+        # 按降序排序
+        industry_ratios.sort(reverse=True)
+
+        # 取第一大行业的占比
+        top1_ratio = industry_ratios[0]
+
+        # 返回百分比格式，例如：'第一大持仓行业占比87.36%'
+        return f"第一大持仓行业占比{top1_ratio:.2f}%"
+
+    except Exception as e:
+        # print(f"AKShare获取基金 {fund_code} 行业集中度失败: {e}")
+        return None
+
+def create_session():
+    """
+    创建一个带有重试策略的会话
+    """
+    session = requests.Session()
+
+    # 定义重试策略
+    retry_strategy = Retry(
+        total=3,  # 总重试次数
+        backoff_factor=1,  # 重试间隔
+        status_forcelist=[429, 500, 502, 503, 504],  # 需要重试的状态码
+    )
+
+    # 创建适配器并挂载到会话
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+
+    return session
+
+def decompress_response_content(response):
+    """
+    尝试解压响应内容
+    """
+    content = response.content
+    headers = response.headers
+
+    # 检查Content-Encoding
+    content_encoding = headers.get('Content-Encoding', '').lower()
+
+    try:
+        if 'gzip' in content_encoding:
+            content = gzip.decompress(content)
+        elif 'deflate' in content_encoding:
+            content = zlib.decompress(content)
+        elif 'br' in content_encoding:
+            content = brotli.decompress(content)
+    except Exception as e:
+        print(f"解压响应内容失败: {str(e)}")
+        return response.content
+    return content
+
+def extract_numeric_value(text):
+    """
+    从文本中提取数字和单位，例如从"基金最新一期规模5692.07万"提取"5692.07万"
+    """
+    if not isinstance(text, str):
+        return text
+
+    # 使用正则表达式匹配数字和单位（包括小数点、百分比符号、中文单位等）
+    pattern = r'(\d+(?:\.\d+)?(?:[%万亿亿千万百十])*)'
+    matches = re.findall(pattern, text)
+
+    if matches:
+        return matches[0]
+    return text
+
+
+def parse_fund_data(fund_code):
+    """
+    调用API接口并解析基金数据
+    """
+    url = "https://apiv2.jiucaishuo.com/funddetail/detail/fund-high-lights"
+    payload = {
+        "fund_code": fund_code,
+        "type": "h5"
+    }
+
+    # 创建会话
+    session = create_session()
+
+    try:
+        response = session.post(url, json=payload, headers=HEADER_JIUQUAN, timeout=15, stream=True)
+        response.raise_for_status()
+
+        # 尝试解压响应内容
+        # content = decompress_response_content(response)
+        content = response.content
+
+        # 尝试不同的编码方式解码
+        try:
+            text = content.decode('utf-8')
+        except UnicodeDecodeError:
+            try:
+                text = content.decode('gbk')
+            except UnicodeDecodeError:
+                text = content.decode('utf-8', errors='ignore')
+
+        # 清理文本内容
+        text = text.strip()
+
+        # 检查响应内容是否为空
+        if not text:
+            print(f"基金 {fund_code} 接口返回空内容")
+            return None
+
+        # 检查响应内容是否为有效的JSON
+        try:
+            # 尝试解析JSON之前，先检查内容是否看起来像JSON
+            if not (text.startswith('{') or text.startswith('[')):
+                print(f"基金 {fund_code} 接口返回非JSON内容: {text[:100]}...")
+                return None
+
+            data = json.loads(text)
+        except json.JSONDecodeError as e:
+            print(f"基金 {fund_code} JSON解析失败: {str(e)}")
+            print(f"响应状态码: {response.status_code}")
+            print(f"响应头: {dict(response.headers)}")
+            print(f"响应内容前200字符: {text[:200]!r}")
+            # 将响应内容保存到文件供分析
+            with open(f'{fund_code}_response.txt', 'w', encoding='utf-8') as f:
+                f.write(text)
+            print(f"响应内容已保存到 {fund_code}_response.txt")
+            return None
+
+        # print("接口返回数据:", data)
+
+        if data['code'] != 0:
+            print(f"基金 {fund_code} 接口返回错误: {data['message']}")
+            return None
+
+        return parse_fund_details(data['data'], fund_code)
+
+    except requests.exceptions.RequestException as e:
+        print(f"基金 {fund_code} 请求失败: {str(e)}")
+        return None
+    except Exception as e:
+        print(f"基金 {fund_code} 解析异常: {str(e)}")
+        return None
+
+
+def parse_fund_details(data, fund_code):
+    """
+    解析基金详细信息
+    """
+    result = {
+        '基金代码': fund_code,
+        '解析时间': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
+    }
+
+    # 解析持仓特征
+    position_features = data.get('tssj_list', [])
+    for feature in position_features:
+        if feature.get('name') == '持仓特征':
+            for tag in feature.get('tags', []):
+                left_title = tag.get('left_title', '')
+                info = tag.get('info', '')
+                if '换手率' in left_title:
+                    result['换手率'] = extract_numeric_value(info)
+                elif '持股集中度' in left_title:
+                    result['前10大重仓股占比'] = extract_numeric_value(info)
+                elif '持股行业集中度' in left_title:
+                    result['持股行业集中度'] = info  # 保持原样
+
+    # 如果久财说没有返回持股行业集中度，尝试从AKShare获取
+    if '持股行业集中度' not in result or not result['持股行业集中度']:
+        akshare_result = get_industry_concentration_from_akshare(fund_code)
+        if akshare_result:
+            result['持股行业集中度'] = akshare_result
+
+    # 解析基金经理信息
+    manager_features = data.get('tssj_list', [])
+    for feature in manager_features:
+        if feature.get('name') == '基金经理':
+            for tag in feature.get('tags', []):
+                left_title = tag.get('left_title', '')
+                info = tag.get('info', '')
+                if '管理总规模' in left_title:
+                    result['管理总规模'] = info
+
+
+    return result
+
+def fetch_and_parse_fund_search(keyword: str) -> List[Dict[str, str]]:
+    """
+    根据关键词获取并解析基金搜索数据
+
+    Args:
+        keyword (str): 搜索关键词
+
+    Returns:
+        list: 解析后的基金数据列表
+    """
+    url = "https://fundsuggest.eastmoney.com/FundSearch/api/FundSearchAPI.ashx"
+
+    params = {
+        "m": "1",
+        "key": keyword
+    }
+
+    try:
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        return parse_fund_search_response(response.text)
+    except Exception as e:
+        return {
+            "error": True,
+            "error_code": -1,
+            "error_message": f"请求失败: {str(e)}"
+        }
+
+
+def parse_fund_search_response(response_text: str) -> list:
+    """
+    解析基金搜索API的响应数据
+
+    Args:
+        response_text (str): API返回的原始响应文本
+
+    Returns:
+        dict: 解析后的基金数据
+    """
+    try:
+        # 首先尝试解析为JSON（直接JSON格式）
+        data = json.loads(response_text)
+    except json.JSONDecodeError:
+        # 如果失败，尝试去除JSONP包装后再解析
+        json_str = re.search(r'^[^(]*\((.*)\)$', response_text.strip())
+        if not json_str:
+            raise ValueError("无效的响应格式")
+        data = json.loads(json_str.group(1))
+
+    # 如果有错误码且不为0，返回错误信息
+    if data.get("ErrCode", 0) != 0:
+        return {
+            "error": True,
+            "error_code": data.get("ErrCode"),
+            "error_message": data.get("ErrMsg", "未知错误")
+        }
+
+    # 解析基金数据
+    parsed_funds = []
+    for fund_data in data.get("Datas", []):
+        parsed_fund = {
+            # 基金基本信息
+            "code": fund_data.get("CODE"),
+            "name": fund_data.get("NAME"),
+        }
+
+        parsed_funds.append(parsed_fund)
+    return parsed_funds
+
+def get_fund_info(fund_code):
+    """
+    通过天天基金接口获取基金的成立时间和最新规模（优化版）
+
+    该方法只请求一次基金详情页，并使用 BeautifulSoup 解析 HTML，
+    同时提取成立日期和最新规模，效率更高。
+
+    参数
+    ----------
+    fund_code : str
+        基金代码，如 '001186'
+
+    返回
+    -------
+    dict
+        {
+            '基金代码': str,
+            '成立日期': str,
+            '最新规模': str,
+            '规模日期': str,
+            '错误': str  # 如果获取失败
+        }
+    """
+    result = {
+        '基金代码': fund_code,
+        '成立日期': '',
+        '最新规模': '',
+        '规模日期': '',
+        '错误': None
+    }
+
+    # 请求基金详情页
+    detail_url = f'http://fund.eastmoney.com/{fund_code}.html'
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
+    }
+
+    try:
+        response = requests.get(detail_url, headers=headers, timeout=10)
+        response.encoding = 'utf-8'
+
+        # 如果请求失败（如404），则直接返回
+        if response.status_code != 200:
+            result['错误'] = f"请求失败，状态码: {response.status_code}"
+            return result
+
+        # 使用 BeautifulSoup 解析 HTML
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        # 查找包含基金信息的表格
+        info_table = soup.find('div', class_='infoOfFund')
+        if not info_table:
+            result['错误'] = "未找到基金信息区域（.infoOfFund）"
+            return result
+
+        # 遍历表格中的所有单元格
+        for td in info_table.find_all('td'):
+            td_text = td.get_text(strip=True)
+
+            # 提取成立日期
+            if '成 立 日' in td_text:
+                # 使用正则表达式提取日期，更精确
+                date_match = re.search(r'(\d{4}-\d{2}-\d{2})', td_text)
+                if date_match:
+                    result['成立时间'] = date_match.group(1)
+            # 提取规模和规模日期
+            if '规模' in td_text and '亿元' in td_text:
+                # 使用正则表达式提取规模和日期
+                scale_match = re.search(r'([\d.]+)亿元（(\d{4}-\d{2}-\d{2})）', td_text)
+                if scale_match:
+                    result['最新规模'] = f"{scale_match.group(1)}亿元"
+                    result['最新规模日期'] = scale_match.group(2)
+
+    except requests.exceptions.RequestException as e:
+        result['错误'] = f"网络请求错误: {e}"
+    except Exception as e:
+        result['错误'] = f"解析错误: {e}"
+
+    return result
 
 def get_top10_stocks_weight_robust(fund_code):
     """
@@ -244,7 +632,8 @@ def fetch_fund_details(row):
         "最新规模": "",
         "换手率": "",
         "前10大重仓股占比": "",
-        "持股行业集中度": ""
+        "持股行业集中度": "",
+        "管理总规模": ""
     }
     
     # 先获取当前基金的基本信息和规模
@@ -288,6 +677,8 @@ def fetch_fund_details(row):
                 result["前10大重仓股占比"] = fund_detail['前10大重仓股占比']
             if '持股行业集中度' in fund_detail:
                 result["持股行业集中度"] = fund_detail['持股行业集中度']
+            if '管理总规模' in fund_detail:
+                result["管理总规模"] = fund_detail['管理总规模']
         
         if not result["前10大重仓股占比"] or pd.isna(result["前10大重仓股占比"]):
             top10_weight = get_top10_stocks_weight_robust(code)
@@ -374,6 +765,7 @@ def analyze_funds():
                 fund_open_fund_rank_em_df.at[idx, "换手率"] = result["换手率"]
                 fund_open_fund_rank_em_df.at[idx, "前10大重仓股占比"] = result["前10大重仓股占比"]
                 fund_open_fund_rank_em_df.at[idx, "持股行业集中度"] = result["持股行业集中度"]
+                fund_open_fund_rank_em_df.at[idx, "管理总规模"] = result["管理总规模"]
             except Exception as e:
                 pass
     
