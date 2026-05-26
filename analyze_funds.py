@@ -2,17 +2,749 @@ import re
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import json
+import os
+import re
+import requests
+from typing import Dict, List, Optional, Any
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+import gzip
+import zlib
+import brotli
 import pandas as pd
 import akshare as ak
 from datetime import datetime, timedelta
 from tqdm import tqdm
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment
-from enhanced_index import get_fund_info
-from fund_data_processor import get_fund_name_by_code
-from fund_search_parser import fetch_and_parse_fund_search
-from jiuquan_fund import parse_fund_data
+from bs4 import BeautifulSoup
 
+HEADER_JIUQUAN = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    'Content-Type': 'application/json',
+    'Accept': 'application/json, text/plain, */*',
+    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Connection': 'keep-alive',
+    'Referer': 'https://apiv2.jiucaishuo.com/'
+}
+
+
+def get_industry_concentration_from_akshare(fund_code):
+    """
+    通过AKShare获取基金的行业配置数据，并获取第一大持仓行业占比
+
+    参数
+    ------
+    fund_code : str
+        基金代码
+
+    返回
+    ------
+    str or None
+        第一大持仓行业占比（百分比字符串），获取失败返回None
+    """
+    try:
+        from datetime import datetime
+        current_year = str(datetime.now().year)
+        previous_year = str(datetime.now().year - 1)
+        
+        # 调用AKShare的行业配置接口（先尝试今年，再尝试去年）
+        try:
+            industry_df = ak.fund_portfolio_industry_allocation_em(symbol=fund_code, date=current_year)
+        except Exception:
+            try:
+                industry_df = ak.fund_portfolio_industry_allocation_em(symbol=fund_code, date=previous_year)
+            except Exception:
+                return None
+
+        if industry_df.empty:
+            return None
+
+        # 按截止时间排序，获取最新一期
+        if '截止时间' in industry_df.columns:
+            industry_df_sorted = industry_df.sort_values('截止时间', ascending=False)
+            latest_quarter = industry_df_sorted.iloc[0]['截止时间']
+            # 筛选最新一期的所有行业数据
+            latest_data = industry_df_sorted[industry_df_sorted['截止时间'] == latest_quarter]
+        else:
+            latest_data = industry_df
+
+        # 提取行业占比
+        industry_ratios = []
+        for _, row in latest_data.iterrows():
+            if '占净值比例' in row and pd.notna(row['占净值比例']) and row['占净值比例'] > 0:
+                industry_ratios.append(row['占净值比例'])
+
+        if not industry_ratios:
+            return None
+
+        # 按降序排序
+        industry_ratios.sort(reverse=True)
+
+        # 取第一大行业的占比
+        top1_ratio = industry_ratios[0]
+
+        # 返回百分比格式，例如：'第一大持仓行业占比87.36%'
+        return f"第一大持仓行业占比{top1_ratio:.2f}%"
+
+    except Exception as e:
+        # print(f"AKShare获取基金 {fund_code} 行业集中度失败: {e}")
+        return None
+
+
+def get_fund_nav_history(fund_code, days=365):
+    """
+    获取基金近N天的净值数据
+
+    参数
+    ------
+    fund_code : str
+        基金代码
+    days : int
+        获取天数，默认365天
+
+    返回
+    ------
+    pd.DataFrame or None
+        包含日期和净值的DataFrame，获取失败返回None
+    """
+    try:
+        end_date = datetime.now().strftime('%Y%m%d')
+        start_date = (datetime.now() - timedelta(days=days)).strftime('%Y%m%d')
+        
+        print(f"  正在获取基金 {fund_code} 净值数据...")
+        
+        # 获取基金历史净值
+        df = ak.fund_open_fund_info_em(symbol=fund_code, indicator="累计净值走势")
+        
+        if df is None or df.empty:
+            print(f"  失败: 基金 {fund_code} 获取不到净值数据")
+            return None
+        
+        # 确保日期列是datetime类型
+        if '净值日期' in df.columns:
+            df['日期'] = pd.to_datetime(df['净值日期'])
+        elif '日期' in df.columns:
+            df['日期'] = pd.to_datetime(df['日期'])
+        else:
+            print(f"  失败: 基金 {fund_code} 数据中没有日期列")
+            return None
+        
+        # 筛选日期范围
+        df = df[(df['日期'] >= pd.to_datetime(start_date)) & (df['日期'] <= pd.to_datetime(end_date))]
+        
+        # 排序
+        df = df.sort_values('日期').reset_index(drop=True)
+        
+        # 只保留需要的列
+        if '累计净值' in df.columns:
+            df = df[['日期', '累计净值']]
+        elif '净值' in df.columns:
+            df = df[['日期', '净值']]
+            df = df.rename(columns={'净值': '累计净值'})
+        else:
+            print(f"  失败: 基金 {fund_code} 数据中没有净值列")
+            return None
+        
+        if len(df) == 0:
+            print(f"  失败: 基金 {fund_code} 筛选日期后无数据")
+            return None
+        
+        print(f"  成功: 基金 {fund_code} 获取到 {len(df)} 条数据")
+        return df
+    
+    except Exception as e:
+        print(f"  失败: 获取基金 {fund_code} 净值异常: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def get_csi_all_share_history(days=365):
+    """
+    获取中证全指(000985)近N天的净值数据
+
+    参数
+    ------
+    days : int
+        获取天数，默认365天
+
+    返回
+    ------
+    pd.DataFrame or None
+        包含日期和收盘指数的DataFrame，获取失败返回None
+    """
+    try:
+        # 禁用代理设置
+        os.environ['HTTP_PROXY'] = ''
+        os.environ['HTTPS_PROXY'] = ''
+        os.environ['http_proxy'] = ''
+        os.environ['https_proxy'] = ''
+        
+        print(f"  正在获取中证全指(sh000985)数据...")
+        
+        # 使用腾讯证券接口获取数据
+        df = ak.stock_zh_index_daily_tx(symbol="sh000985")
+        
+        if df is None or df.empty:
+            print(f"  失败: 中证全指获取不到数据")
+            return None
+        
+        print(f"  ✓ 数据获取成功！")
+        
+        # 重命名列名（英文 -> 中文）
+        df = df.rename(columns={
+            'date': '日期',
+            'close': '收盘'
+        })
+        
+        # 确保日期列是 datetime 类型
+        df['日期'] = pd.to_datetime(df['日期'])
+        
+        # 按日期升序排序
+        df = df.sort_values(by='日期').reset_index(drop=True)
+        
+        # 计算指定天数前的日期
+        cutoff_date = datetime.now() - timedelta(days=days)
+        
+        # 只保留最近N天的数据
+        df = df[df['日期'] >= cutoff_date].copy()
+        
+        # 只保留需要的列
+        df = df[['日期', '收盘']]
+        df = df.rename(columns={'收盘': '指数'})
+        
+        if len(df) == 0:
+            print(f"  失败: 中证全指无数据")
+            return None
+        
+        print(f"  成功: 中证全指获取到 {len(df)} 条数据")
+        return df
+    
+    except Exception as e:
+        print(f"  失败: 获取中证全指异常: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def calculate_excess_return_curve(fund_df, benchmark_df):
+    """
+    计算基金相对基准的超额收益曲线
+
+    参数
+    ------
+    fund_df : pd.DataFrame
+        基金净值数据，包含日期和累计净值列
+    benchmark_df : pd.DataFrame
+        基准指数数据，包含日期和指数列
+
+    返回
+    ------
+    list or None
+        超额收益曲线数据点列表，格式为 [{'date': date1, 'excess_return': value1}, ...]
+        date格式为YYYY-MM-DD，value为小数（不是百分比）
+    """
+    try:
+        if fund_df is None or fund_df.empty or benchmark_df is None or benchmark_df.empty:
+            print("数据为空")
+            return None
+        
+        # 确保两个数据框都按日期排序（升序，从早到晚）
+        fund_df = fund_df.sort_values('日期').reset_index(drop=True)
+        benchmark_df = benchmark_df.sort_values('日期').reset_index(drop=True)
+        
+        # 合并数据，按日期对齐
+        merged = pd.merge(fund_df, benchmark_df, on='日期', how='inner')
+        
+        if len(merged) < 2:
+            print("合并后数据点太少")
+            return None
+        
+        # 再次确保按日期排序（升序）
+        merged = merged.sort_values('日期').reset_index(drop=True)
+        
+        # 计算累计收益率（从起始点开始），使用小数而非百分比
+        merged['基金收益'] = merged['累计净值'] / merged['累计净值'].iloc[0] - 1
+        merged['基准收益'] = merged['指数'] / merged['指数'].iloc[0] - 1
+        merged['超额收益'] = merged['基金收益'] - merged['基准收益']
+        
+        # 格式化数据，减少数据点到约60个点（避免数据过多）
+        if len(merged) > 60:
+            step = max(1, len(merged) // 60)
+            # 确保包含第一天和最后一天
+            indices = list(range(0, len(merged), step))
+            if indices[-1] != len(merged) - 1:
+                indices.append(len(merged) - 1)
+            merged = merged.iloc[indices].reset_index(drop=True)
+        
+        # 最后再检查一次排序（确保日期是升序）
+        merged = merged.sort_values('日期').reset_index(drop=True)
+        
+        # 转换为列表格式，使用字典格式，值为小数
+        curve_data = []
+        for _, row in merged.iterrows():
+            date_str = row['日期'].strftime('%Y-%m-%d')
+            excess_value = float(row['超额收益'])  # 保持为小数，前端再乘以100
+            curve_data.append({'date': date_str, 'excess_return': excess_value})
+        
+        # 打印调试信息
+        if curve_data:
+            print(f"超额收益曲线: 起始={curve_data[0]['date']}:{curve_data[0]['excess_return']:.4f}, "
+                  f"结束={curve_data[-1]['date']}:{curve_data[-1]['excess_return']:.4f}")
+        
+        return curve_data
+    
+    except Exception as e:
+        print(f"计算超额收益曲线失败：{e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def get_excess_return_curve_for_fund(fund_code, days=365, benchmark_df=None):
+    """
+    一站式获取基金相对中证全指的超额收益曲线
+
+    参数
+    ------
+    fund_code : str
+        基金代码
+    days : int
+        天数，默认365天
+    benchmark_df : pd.DataFrame, optional
+        预先获取的中证全指数据，如果提供则不再重复获取
+
+    返回
+    ------
+    list or None
+        超额收益曲线数据列表，格式为 [{'date': date1, 'excess_return': value1}, ...]
+        获取失败返回None
+    """
+    print(f"\n--- get_excess_return_curve_for_fund: {fund_code} ---")
+    
+    try:
+        fund_df = get_fund_nav_history(fund_code, days)
+        if fund_df is None or fund_df.empty:
+            print(f"  失败: 基金净值数据为空")
+            return None
+        print(f"  ✓ 基金净值: {len(fund_df)} 条")
+        
+        if benchmark_df is None:
+            benchmark_df = get_csi_all_share_history(days)
+            if benchmark_df is None or benchmark_df.empty:
+                print(f"  失败: 基准指数数据为空")
+                return None
+            print(f"  ✓ 基准指数: {len(benchmark_df)} 条")
+        else:
+            print(f"  ✓ 使用预先获取的基准指数: {len(benchmark_df)} 条")
+        
+        curve_data = calculate_excess_return_curve(fund_df, benchmark_df)
+        if curve_data is None or len(curve_data) == 0:
+            print(f"  失败: 计算超额收益曲线失败")
+            return None
+        print(f"  ✓ 计算成功: {len(curve_data)} 个点")
+        
+        return curve_data
+    except Exception as e:
+        print(f"  失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def create_session():
+    """
+    创建一个带有重试策略的会话
+    """
+    session = requests.Session()
+
+    # 定义重试策略
+    retry_strategy = Retry(
+        total=3,  # 总重试次数
+        backoff_factor=1,  # 重试间隔
+        status_forcelist=[429, 500, 502, 503, 504],  # 需要重试的状态码
+    )
+
+    # 创建适配器并挂载到会话
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+
+    return session
+
+def decompress_response_content(response):
+    """
+    尝试解压响应内容
+    """
+    content = response.content
+    headers = response.headers
+
+    # 检查Content-Encoding
+    content_encoding = headers.get('Content-Encoding', '').lower()
+
+    try:
+        if 'gzip' in content_encoding:
+            content = gzip.decompress(content)
+        elif 'deflate' in content_encoding:
+            content = zlib.decompress(content)
+        elif 'br' in content_encoding:
+            content = brotli.decompress(content)
+    except Exception as e:
+        print(f"解压响应内容失败: {str(e)}")
+        return response.content
+    return content
+
+
+def get_fund_industry_allocation(fund_code, industry_type='shenwan'):
+    """
+    获取基金的行业配置数据
+    industry_type: 'shenwan' (申万) 或 'wind' (万得)
+    """
+    url = "https://api.jiucaishuo.com/fundetail/fund-position/fundinvest"
+    
+    payload = {
+        "fund_code": fund_code,
+        "tp": "hy"
+    }
+    
+    # 根据行业类型设置category参数
+    if industry_type == 'shenwan':
+        payload["category"] = "sw_category"  # 申万行业
+    elif industry_type == 'wind':
+        payload["category"] = "wind_category"  # 万得行业
+    
+    try:
+        session = create_session()
+        response = session.post(url, json=payload, headers=HEADER_JIUQUAN, timeout=15)
+        response.raise_for_status()
+        
+        data = response.json()
+        
+        if data.get('code') != 0:
+            print(f"获取基金 {fund_code} 行业数据失败: {data.get('message')}")
+            return None
+        
+        return data.get('data')
+        
+    except Exception as e:
+        print(f"请求行业配置异常: {e}")
+        return None
+
+
+def get_top_industry_ratio(fund_code):
+    """
+    获取基金第一大持仓行业占比
+    优先使用申万行业分类，失败则使用万得
+    """
+    # 先尝试申万行业
+    # industry_data = get_fund_industry_allocation(fund_code, 'shenwan')
+    # if not industry_data:
+    # 申万失败，尝试万得
+    industry_data = get_fund_industry_allocation(fund_code, 'wind')
+    
+    if not industry_data:
+        return None
+    
+    # 解析行业数据
+    if 'hy' in industry_data and 'series' in industry_data['hy']:
+        industry_list = industry_data['hy']['series']
+        if industry_list:
+            # 按占比排序，取第一大
+            industry_list_sorted = sorted(industry_list, key=lambda x: x.get('data', 0), reverse=True)
+            top_industry = industry_list_sorted[0]
+            ratio_str = top_industry.get('data1', '')
+            if ratio_str:
+                return f"第一大持仓行业占比{ratio_str}"
+    
+    return None
+
+def extract_numeric_value(text):
+    """
+    从文本中提取数字和单位，例如从"基金最新一期规模5692.07万"提取"5692.07万"
+    """
+    if not isinstance(text, str):
+        return text
+
+    # 使用正则表达式匹配数字和单位（包括小数点、百分比符号、中文单位等）
+    pattern = r'(\d+(?:\.\d+)?(?:[%万亿亿千万百十])*)'
+    matches = re.findall(pattern, text)
+
+    if matches:
+        return matches[0]
+    return text
+
+
+def parse_fund_data(fund_code):
+    """
+    调用API接口并解析基金数据
+    """
+    url = "https://apiv2.jiucaishuo.com/funddetail/detail/fund-high-lights"
+    payload = {
+        "fund_code": fund_code,
+        "type": "h5"
+    }
+
+    # 创建会话
+    session = create_session()
+
+    try:
+        response = session.post(url, json=payload, headers=HEADER_JIUQUAN, timeout=15, stream=True)
+        response.raise_for_status()
+
+        # 尝试解压响应内容
+        # content = decompress_response_content(response)
+        content = response.content
+
+        # 尝试不同的编码方式解码
+        try:
+            text = content.decode('utf-8')
+        except UnicodeDecodeError:
+            try:
+                text = content.decode('gbk')
+            except UnicodeDecodeError:
+                text = content.decode('utf-8', errors='ignore')
+
+        # 清理文本内容
+        text = text.strip()
+
+        # 检查响应内容是否为空
+        if not text:
+            print(f"基金 {fund_code} 接口返回空内容")
+            return None
+
+        # 检查响应内容是否为有效的JSON
+        try:
+            # 尝试解析JSON之前，先检查内容是否看起来像JSON
+            if not (text.startswith('{') or text.startswith('[')):
+                print(f"基金 {fund_code} 接口返回非JSON内容: {text[:100]}...")
+                return None
+
+            data = json.loads(text)
+        except json.JSONDecodeError as e:
+            print(f"基金 {fund_code} JSON解析失败: {str(e)}")
+            print(f"响应状态码: {response.status_code}")
+            print(f"响应头: {dict(response.headers)}")
+            print(f"响应内容前200字符: {text[:200]!r}")
+            # 将响应内容保存到文件供分析
+            with open(f'{fund_code}_response.txt', 'w', encoding='utf-8') as f:
+                f.write(text)
+            print(f"响应内容已保存到 {fund_code}_response.txt")
+            return None
+
+        # print("接口返回数据:", data)
+
+        if data['code'] != 0:
+            print(f"基金 {fund_code} 接口返回错误: {data['message']}")
+            return None
+
+        return parse_fund_details(data['data'], fund_code)
+
+    except requests.exceptions.RequestException as e:
+        print(f"基金 {fund_code} 请求失败: {str(e)}")
+        return None
+    except Exception as e:
+        print(f"基金 {fund_code} 解析异常: {str(e)}")
+        return None
+
+
+def parse_fund_details(data, fund_code):
+    """
+    解析基金详细信息
+    """
+    result = {
+        '基金代码': fund_code,
+        '解析时间': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
+    }
+
+    # 解析持仓特征
+    position_features = data.get('tssj_list', [])
+    for feature in position_features:
+        if feature.get('name') == '持仓特征':
+            for tag in feature.get('tags', []):
+                left_title = tag.get('left_title', '')
+                info = tag.get('info', '')
+                if '换手率' in left_title:
+                    result['换手率'] = extract_numeric_value(info)
+                elif '持股集中度' in left_title:
+                    result['前10大重仓股占比'] = extract_numeric_value(info)
+                elif '持股行业集中度' in left_title:
+                    result['持股行业集中度'] = info  # 保持原样
+
+    # 优先使用 fundinvest API 获取行业集中度
+    if '持股行业集中度' not in result or not result['持股行业集中度']:
+        top_industry_result = get_top_industry_ratio(fund_code)
+        if top_industry_result:
+            result['持股行业集中度'] = top_industry_result
+        # else:
+        #     # 如果 fundinvest API 失败，尝试从 AKShare 获取
+        #     akshare_result = get_industry_concentration_from_akshare(fund_code)
+        #     if akshare_result:
+        #         result['持股行业集中度'] = akshare_result
+
+    # 解析基金经理信息
+    manager_features = data.get('tssj_list', [])
+    for feature in manager_features:
+        if feature.get('name') == '基金经理':
+            for tag in feature.get('tags', []):
+                left_title = tag.get('left_title', '')
+                info = tag.get('info', '')
+                if '管理总规模' in left_title:
+                    result['管理总规模'] = info
+
+
+    return result
+
+def fetch_and_parse_fund_search(keyword: str) -> List[Dict[str, str]]:
+    """
+    根据关键词获取并解析基金搜索数据
+
+    Args:
+        keyword (str): 搜索关键词
+
+    Returns:
+        list: 解析后的基金数据列表
+    """
+    url = "https://fundsuggest.eastmoney.com/FundSearch/api/FundSearchAPI.ashx"
+
+    params = {
+        "m": "1",
+        "key": keyword
+    }
+
+    try:
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        return parse_fund_search_response(response.text)
+    except Exception as e:
+        return {
+            "error": True,
+            "error_code": -1,
+            "error_message": f"请求失败: {str(e)}"
+        }
+
+
+def parse_fund_search_response(response_text: str) -> list:
+    """
+    解析基金搜索API的响应数据
+
+    Args:
+        response_text (str): API返回的原始响应文本
+
+    Returns:
+        dict: 解析后的基金数据
+    """
+    try:
+        # 首先尝试解析为JSON（直接JSON格式）
+        data = json.loads(response_text)
+    except json.JSONDecodeError:
+        # 如果失败，尝试去除JSONP包装后再解析
+        json_str = re.search(r'^[^(]*\((.*)\)$', response_text.strip())
+        if not json_str:
+            raise ValueError("无效的响应格式")
+        data = json.loads(json_str.group(1))
+
+    # 如果有错误码且不为0，返回错误信息
+    if data.get("ErrCode", 0) != 0:
+        return {
+            "error": True,
+            "error_code": data.get("ErrCode"),
+            "error_message": data.get("ErrMsg", "未知错误")
+        }
+
+    # 解析基金数据
+    parsed_funds = []
+    for fund_data in data.get("Datas", []):
+        parsed_fund = {
+            # 基金基本信息
+            "code": fund_data.get("CODE"),
+            "name": fund_data.get("NAME"),
+        }
+
+        parsed_funds.append(parsed_fund)
+    return parsed_funds
+
+def get_fund_info(fund_code):
+    """
+    通过天天基金接口获取基金的成立时间和最新规模（优化版）
+
+    该方法只请求一次基金详情页，并使用 BeautifulSoup 解析 HTML，
+    同时提取成立日期和最新规模，效率更高。
+
+    参数
+    ----------
+    fund_code : str
+        基金代码，如 '001186'
+
+    返回
+    -------
+    dict
+        {
+            '基金代码': str,
+            '成立日期': str,
+            '最新规模': str,
+            '规模日期': str,
+            '错误': str  # 如果获取失败
+        }
+    """
+    result = {
+        '基金代码': fund_code,
+        '成立日期': '',
+        '最新规模': '',
+        '规模日期': '',
+        '错误': None
+    }
+
+    # 请求基金详情页
+    detail_url = f'http://fund.eastmoney.com/{fund_code}.html'
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
+    }
+
+    try:
+        response = requests.get(detail_url, headers=headers, timeout=10)
+        response.encoding = 'utf-8'
+
+        # 如果请求失败（如404），则直接返回
+        if response.status_code != 200:
+            result['错误'] = f"请求失败，状态码: {response.status_code}"
+            return result
+
+        # 使用 BeautifulSoup 解析 HTML
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        # 查找包含基金信息的表格
+        info_table = soup.find('div', class_='infoOfFund')
+        if not info_table:
+            result['错误'] = "未找到基金信息区域（.infoOfFund）"
+            return result
+
+        # 遍历表格中的所有单元格
+        for td in info_table.find_all('td'):
+            td_text = td.get_text(strip=True)
+
+            # 提取成立日期
+            if '成 立 日' in td_text:
+                # 使用正则表达式提取日期，更精确
+                date_match = re.search(r'(\d{4}-\d{2}-\d{2})', td_text)
+                if date_match:
+                    result['成立时间'] = date_match.group(1)
+            # 提取规模和规模日期
+            if '规模' in td_text and '亿元' in td_text:
+                # 使用正则表达式提取规模和日期
+                scale_match = re.search(r'([\d.]+)亿元（(\d{4}-\d{2}-\d{2})）', td_text)
+                if scale_match:
+                    result['最新规模'] = f"{scale_match.group(1)}亿元"
+                    result['最新规模日期'] = scale_match.group(2)
+
+    except requests.exceptions.RequestException as e:
+        result['错误'] = f"网络请求错误: {e}"
+    except Exception as e:
+        result['错误'] = f"解析错误: {e}"
+
+    return result
 
 def get_top10_stocks_weight_robust(fund_code):
     """
@@ -88,12 +820,33 @@ def get_top10_stocks_weight_robust(fund_code):
 
 def get_csi_all_share_returns():
     try:
-        end_date = datetime.now().strftime('%Y%m%d')
-        start_date = (datetime.now() - timedelta(days=3*365)).strftime('%Y%m%d')
-
-        df = ak.stock_zh_index_hist_csindex(symbol='000985', start_date=start_date, end_date=end_date)
-
+        # 禁用代理设置
+        os.environ['HTTP_PROXY'] = ''
+        os.environ['HTTPS_PROXY'] = ''
+        os.environ['http_proxy'] = ''
+        os.environ['https_proxy'] = ''
+        
+        print("正在获取中证全指(sh000985)数据...")
+        
+        # 使用腾讯证券接口获取数据
+        df = ak.stock_zh_index_daily_tx(symbol="sh000985")
+        
+        if df is None or df.empty:
+            print("获取数据失败：返回空数据，使用默认数据...")
+            return {"近3年":25.33,"近2年":49.90,"近1年":33.97,"今年来":5.95,"近6月":8.63,"近3月":-1.35,"近1月":9.57}
+        
+        print("[OK] 数据获取成功！")
+        
+        # 重命名列名（英文 -> 中文）
+        df = df.rename(columns={
+            'date': '日期',
+            'close': '收盘'
+        })
+        
+        # 确保日期列是 datetime 类型
         df['日期'] = pd.to_datetime(df['日期'])
+        
+        # 按日期降序排序
         df = df.sort_values('日期', ascending=False).reset_index(drop=True)
 
         latest_date = df.iloc[0]['日期']
@@ -130,7 +883,7 @@ def get_csi_all_share_returns():
         else:
             period_returns['今年来'] = 0
 
-        print(f"中证全指(000985)最新日期：{latest_date.strftime('%Y-%m-%d')}")
+        print(f"中证全指(sh000985)最新日期：{latest_date.strftime('%Y-%m-%d')}")
         print(f"中证全指各时间段收益率：{period_returns}")
 
         return period_returns
@@ -244,7 +997,8 @@ def fetch_fund_details(row):
         "最新规模": "",
         "换手率": "",
         "前10大重仓股占比": "",
-        "持股行业集中度": ""
+        "持股行业集中度": "",
+        "管理总规模": ""
     }
     
     # 先获取当前基金的基本信息和规模
@@ -288,6 +1042,8 @@ def fetch_fund_details(row):
                 result["前10大重仓股占比"] = fund_detail['前10大重仓股占比']
             if '持股行业集中度' in fund_detail:
                 result["持股行业集中度"] = fund_detail['持股行业集中度']
+            if '管理总规模' in fund_detail:
+                result["管理总规模"] = fund_detail['管理总规模']
         
         if not result["前10大重仓股占比"] or pd.isna(result["前10大重仓股占比"]):
             top10_weight = get_top10_stocks_weight_robust(code)
@@ -301,6 +1057,15 @@ def fetch_fund_details(row):
 
 def analyze_funds():
     zzqz = get_csi_all_share_returns()
+    
+    # 预先获取一次中证全指历史数据，供所有基金复用
+    print("正在预先获取中证全指历史数据...")
+    benchmark_df = get_csi_all_share_history(days=365)
+    if benchmark_df is None or benchmark_df.empty:
+        print("警告：无法获取中证全指数据，将在每只基金中单独获取")
+        benchmark_df = None
+    else:
+        print(f"成功获取中证全指数据：{len(benchmark_df)} 条记录")
 
     print("正在获取基金排名数据...")
     fund_open_fund_rank_em_df = ak.fund_open_fund_rank_em(symbol="全部")
@@ -318,7 +1083,7 @@ def analyze_funds():
     # 关键词过滤
     exclude_keywords = ["持有", "A", "通信", "期货", "有色", "黄金", "半导体", "芯片", "云计算", "商品", "创业板",
                         "中证资源", "电信", "物联网", "工程机械", "医药生物", "稀有金属", "科创板",
-                        "科创创业", "人工智能", "上海金", "TMT", "指数", "可转债", "债券", "化工", "碳中和", "ESG", "ETF"]
+                        "科创创业", "人工智能", "上海金", "TMT", "指数", "可转债", "债券", "化工", "碳中和", "ESG", "ETF", "个月"]
     
     mask = ~fund_open_fund_rank_em_df["基金简称"].str.contains('|'.join(exclude_keywords), na=False)
     fund_open_fund_rank_em_df = fund_open_fund_rank_em_df[mask].copy()
@@ -374,6 +1139,7 @@ def analyze_funds():
                 fund_open_fund_rank_em_df.at[idx, "换手率"] = result["换手率"]
                 fund_open_fund_rank_em_df.at[idx, "前10大重仓股占比"] = result["前10大重仓股占比"]
                 fund_open_fund_rank_em_df.at[idx, "持股行业集中度"] = result["持股行业集中度"]
+                fund_open_fund_rank_em_df.at[idx, "管理总规模"] = result["管理总规模"]
             except Exception as e:
                 pass
     
@@ -515,7 +1281,7 @@ def analyze_funds():
             num_match = re.search(r'([\d.]+)', str(concentration_str))
             if num_match:
                 concentration_value = float(num_match.group(1))
-                in_range = concentration_value < 40
+                in_range = concentration_value < 50
                 debug_concentration_results.append((concentration_str, concentration_value, in_range))
                 return in_range
             else:
@@ -540,7 +1306,38 @@ def analyze_funds():
     
     print(f"\n最终筛选后剩余 {len(fund_open_fund_rank_em_df)} 只基金")
     
-    # 删除不需要的列
+    # step12：为最终筛选出的基金获取超额收益曲线
+    print("\n正在为最终筛选出的基金获取超额收益曲线...")
+    fund_open_fund_rank_em_df.loc[:, "超额收益曲线"] = ""
+    
+    # 为避免重复获取，先检查是否已获取过中证全指数据
+    if benchmark_df is None:
+        print("重新获取中证全指数据...")
+        benchmark_df = get_csi_all_share_history(days=365)
+    
+    if benchmark_df is not None and not benchmark_df.empty:
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = {}
+            for idx, row in fund_open_fund_rank_em_df.iterrows():
+                future = executor.submit(get_excess_return_curve_for_fund, row["基金代码"], days=365, benchmark_df=benchmark_df)
+                futures[future] = idx
+            
+            for future in tqdm(as_completed(futures), total=len(futures)):
+                try:
+                    result = future.result()
+                    idx = futures[future]
+                    if result:
+                        # 将列表转换为 JSON 字符串保存到 Excel
+                        fund_open_fund_rank_em_df.at[idx, "超额收益曲线"] = json.dumps(result, ensure_ascii=False)
+                except Exception as e:
+                    pass
+        
+        print(f"step12_超额收益曲线获取完成，共 {len(fund_open_fund_rank_em_df)} 只基金")
+        fund_open_fund_rank_em_df.to_excel("step12_含超额收益曲线.xlsx", index=False)
+    else:
+        print("警告：无法获取中证全指数据，跳过超额收益曲线获取")
+    
+    # 删除不需要的列（注意：不删除"超额收益曲线"）
     columns_to_drop = ["序号", "单位净值", "累计净值", "日增长率", "自定义", "手续费"]
     # 只删除实际存在的列
     existing_columns = [col for col in columns_to_drop if col in fund_open_fund_rank_em_df.columns]
@@ -549,6 +1346,9 @@ def analyze_funds():
     # 按近6月超额倒序排序
     if "近6月超额" in df_export.columns:
         df_export = df_export.sort_values(by="近6月超额", ascending=False)
+        # 如果数量大于50，只取前50
+        if len(df_export) > 50:
+            df_export = df_export.head(50)
     
     # 使用openpyxl优化Excel格式
     
@@ -556,8 +1356,8 @@ def analyze_funds():
     current_date = datetime.now().strftime('%Y年%m月%d日')
     dated_filename = f"量化基金周报_{current_date}.xlsx"
     
-    # 保存到两个文件
-    output_files = ["step11_最终结果.xlsx", dated_filename]
+    # 保存到三个文件
+    output_files = ["step11_最终结果.xlsx", dated_filename, "fund_open_fund_rank_em.xlsx"]
     
     for file in output_files:
         df_export.to_excel(file, index=False)
