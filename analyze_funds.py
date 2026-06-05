@@ -1,5 +1,6 @@
 import re
 import numpy as np
+from sklearn.linear_model import LinearRegression
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import json
@@ -352,6 +353,75 @@ def get_excess_return_curve_for_fund(fund_code, days=365, benchmark_df=None):
         print(f"  失败: {e}")
         import traceback
         traceback.print_exc()
+        return None
+
+
+def calculate_stability_score(curve_json):
+    """
+    根据超额收益曲线计算稳定性评分
+
+    参数
+    ------
+    curve_json : str or list
+        JSON格式的超额收益曲线数据，或直接是list
+
+    返回
+    ------
+    float or None
+        稳定性评分（百分制整数，0-100），失败返回None
+    """
+    if not curve_json or curve_json == "":
+        return None
+
+    try:
+        if isinstance(curve_json, str):
+            curve_data = json.loads(curve_json)
+        else:
+            curve_data = curve_json
+
+        if not isinstance(curve_data, list) or len(curve_data) < 2:
+            return None
+
+        values = np.array([item['excess_return'] for item in curve_data])
+        n = len(values)
+
+        X = np.arange(n).reshape(-1, 1)
+        y = values
+        model = LinearRegression()
+        model.fit(X, y)
+
+        slope = model.coef_[0]
+        r_squared = model.score(X, y)
+
+        cumulative_returns = np.maximum.accumulate(values)
+        drawdowns = cumulative_returns - values
+        max_drawdown = np.max(drawdowns)
+
+        volatility = np.std(np.diff(values))
+
+        positive_ratio = np.sum(np.diff(values) >= 0) / (n - 1) if n > 1 else 0
+
+        volatility_penalty = max(0, 1 - (volatility / 0.035))
+        drawdown_penalty = max(0, 1 - (max_drawdown / 0.075))
+
+        if volatility > 0.025:
+            volatility_penalty = volatility_penalty * 0.98
+        if volatility > 0.03:
+            volatility_penalty = volatility_penalty * 0.92
+
+        if max_drawdown > 0.08:
+            drawdown_penalty = drawdown_penalty * 0.98
+
+        stability_score = (
+            r_squared * 0.42 +
+            positive_ratio * 0.28 +
+            drawdown_penalty * 0.16 +
+            volatility_penalty * 0.08 +
+            min(slope * 1000, 1) * 0.06
+        )
+
+        return int(round(stability_score * 100))
+    except Exception as e:
         return None
 
 
@@ -1210,7 +1280,7 @@ def analyze_funds():
                     return False
             
             # 判断是否在范围内
-            in_range = 0.2 <= scale_value <= 10
+            in_range = 0.1 <= scale_value <= 10
             debug_scale_results.append((scale_str, scale_value, in_range))
             return in_range
         except Exception as e:
@@ -1337,18 +1407,33 @@ def analyze_funds():
     else:
         print("警告：无法获取中证全指数据，跳过超额收益曲线获取")
     
-    # 删除不需要的列（注意：不删除"超额收益曲线"）
+    # step13：根据超额收益曲线计算稳定性评分
+    print("\n正在计算稳定性评分...")
+    fund_open_fund_rank_em_df.loc[:, "稳定性评分"] = fund_open_fund_rank_em_df["超额收益曲线"].apply(
+        lambda x: calculate_stability_score(x) if pd.notna(x) and x != "" else None
+    )
+    
+    valid_scores = fund_open_fund_rank_em_df["稳定性评分"].notna().sum()
+    print(f"step13_稳定性评分计算完成，共 {valid_scores} 只基金有效评分")
+    
+    step13_df = fund_open_fund_rank_em_df.copy()
+    step13_df = step13_df.sort_values(by="稳定性评分", ascending=False, na_position='last')
+    step13_df.to_excel("step13_含稳定性评分.xlsx", index=False)
+    
+    # 删除不需要的列（注意：不删除"超额收益曲线"和"稳定性评分"）
     columns_to_drop = ["序号", "单位净值", "累计净值", "日增长率", "自定义", "手续费"]
     # 只删除实际存在的列
     existing_columns = [col for col in columns_to_drop if col in fund_open_fund_rank_em_df.columns]
     df_export = fund_open_fund_rank_em_df.drop(columns=existing_columns, errors='ignore')
     
-    # 按近6月超额倒序排序
-    if "近6月超额" in df_export.columns:
+    # 按稳定性评分倒序排序，只保留60分以上的
+    if "稳定性评分" in df_export.columns:
+        df_export = df_export[df_export["稳定性评分"].notna()]
+        df_export = df_export[df_export["稳定性评分"] >= 60]
+        df_export = df_export.sort_values(by="稳定性评分", ascending=False)
+        print(f"筛选完成：保留稳定性评分60分以上共 {len(df_export)} 只基金")
+    elif "近6月超额" in df_export.columns:
         df_export = df_export.sort_values(by="近6月超额", ascending=False)
-        # 如果数量大于50，只取前50
-        if len(df_export) > 50:
-            df_export = df_export.head(50)
     
     # 使用openpyxl优化Excel格式
     

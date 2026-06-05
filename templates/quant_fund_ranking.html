@@ -251,6 +251,7 @@
                             <th>持股行业集中度</th>
                             <th>管理总规模</th>
                             <th>超额收益曲线</th>
+                            <th>稳定性评分</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -276,6 +277,7 @@
                 html += `<td>${formatIndustryConcentration(row['持股行业集中度'])}</td>`;
                 html += `<td>${row['管理总规模'] || ''}</td>`;
                 html += `<td><div id="mini-chart-${row['基金代码']}" class="mini-chart" data-fund-code="${row['基金代码']}"></div></td>`;
+                html += `<td>${formatStabilityScore(row['稳定性评分'])}</td>`;
                 html += `</tr>`;
             });
             
@@ -318,6 +320,28 @@
                 return match[1] + '%';
             }
             return value;
+        }
+        
+        // 格式化稳定性评分
+        function formatStabilityScore(value) {
+            if (value === null || value === undefined || value === '') {
+                return '';
+            }
+            const num = parseFloat(value);
+            if (isNaN(num)) {
+                return '';
+            }
+            let colorClass = '';
+            if (num >= 70) {
+                colorClass = 'positive-number';
+            } else if (num < 30) {
+                colorClass = 'negative-number';
+            }
+            const display = Math.round(num);
+            if (colorClass) {
+                return `<span class="${colorClass}">${display}</span>`;
+            }
+            return display;
         }
         
         // 渲染迷你图
