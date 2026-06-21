@@ -1151,7 +1151,7 @@ def analyze_funds():
     fund_open_fund_rank_em_df.to_excel("step2_去空值.xlsx", index=False)
     
     # 关键词过滤
-    exclude_keywords = ["持有", "A", "通信", "期货", "有色", "黄金", "半导体", "芯片", "云计算", "商品", "创业板",
+    exclude_keywords = ["持有", "A","Y", "通信", "期货", "有色", "黄金", "半导体", "芯片", "云计算", "商品", "创业板",
                         "中证资源", "电信", "物联网", "工程机械", "医药生物", "稀有金属", "科创板",
                         "科创创业", "人工智能", "上海金", "TMT", "指数", "可转债", "债券", "化工", "碳中和", "ESG", "ETF", "个月"]
     
@@ -1236,11 +1236,11 @@ def analyze_funds():
             return turnover_value >= 500
         return False
     
-    fund_open_fund_rank_em_df = fund_open_fund_rank_em_df[
-        fund_open_fund_rank_em_df["换手率"].apply(filter_by_turnover)
-    ].copy()
-    print(f"step7_换手率筛选后：{len(fund_open_fund_rank_em_df)} 只基金")
-    fund_open_fund_rank_em_df.to_excel("step7_换手率筛选.xlsx", index=False)
+    # fund_open_fund_rank_em_df = fund_open_fund_rank_em_df[
+    #     fund_open_fund_rank_em_df["换手率"].apply(filter_by_turnover)
+    # ].copy()
+    # print(f"step7_换手率筛选后：{len(fund_open_fund_rank_em_df)} 只基金")
+    # fund_open_fund_rank_em_df.to_excel("step7_换手率筛选.xlsx", index=False)
     
     # 规模筛选
     debug_scale_results = []
@@ -1280,7 +1280,7 @@ def analyze_funds():
                     return False
             
             # 判断是否在范围内
-            in_range = 0.1 <= scale_value <= 10
+            in_range = scale_value <= 20
             debug_scale_results.append((scale_str, scale_value, in_range))
             return in_range
         except Exception as e:
@@ -1300,79 +1300,55 @@ def analyze_funds():
     if len(debug_scale_results) > 30:
         print(f"... 还有 {len(debug_scale_results)-30} 条")
     
-    # 前10大重仓股占比筛选（<40%）
-    print("\n=== 正在进行前10大重仓股筛选 ===")
-    debug_holdings_results = []
-    
-    def filter_by_holdings(holdings_str):
+    # 组合筛选：持股行业集中度 * 前10大重仓股占比 < 0.20
+    print("\n=== 正在进行组合筛选（持股行业集中度 × 前10大重仓股占比 < 0.20） ===")
+    debug_combined_results = []
+
+    def parse_percent(value_str):
         try:
-            if pd.isna(holdings_str) or holdings_str == "" or holdings_str == "获取失败":
-                debug_holdings_results.append((holdings_str, "空数据"))
-                return True  # 空数据保留
-            
-            # 提取数字
-            num_match = re.search(r'([\d.]+)', str(holdings_str))
+            if pd.isna(value_str) or value_str == "" or value_str == "获取失败":
+                return None, "空数据"
+            num_match = re.search(r'([\d.]+)', str(value_str))
             if num_match:
-                holdings_value = float(num_match.group(1))
-                in_range = holdings_value < 40
-                debug_holdings_results.append((holdings_str, holdings_value, in_range))
-                return in_range
-            else:
-                debug_holdings_results.append((holdings_str, "无法提取数字"))
-                return True  # 无法解析的保留
+                return float(num_match.group(1)) / 100, None
+            return None, "无法提取数字"
         except Exception as e:
-            debug_holdings_results.append((holdings_str, f"异常：{e}"))
-            return True  # 异常保留
-    
+            return None, f"异常：{e}"
+
+    def filter_combined(row):
+        holdings_str = row["前10大重仓股占比"]
+        concentration_str = row["持股行业集中度"]
+        holdings_val, holdings_err = parse_percent(holdings_str)
+        concentration_val, concentration_err = parse_percent(concentration_str)
+
+        if holdings_val is None or concentration_val is None:
+            debug_combined_results.append((
+                holdings_str, concentration_str,
+                "保留",
+                f"重仓股:{holdings_err or 'N/A'}; 集中度:{concentration_err or 'N/A'}"
+            ))
+            return True
+
+        product = holdings_val * concentration_val
+        in_range = product < 0.20
+        debug_combined_results.append((
+            f"{holdings_val*100:.2f}%", f"{concentration_val*100:.2f}%",
+            f"{product:.4f}", in_range
+        ))
+        return in_range
+
     fund_open_fund_rank_em_df = fund_open_fund_rank_em_df[
-        fund_open_fund_rank_em_df["前10大重仓股占比"].apply(filter_by_holdings)
+        fund_open_fund_rank_em_df.apply(filter_combined, axis=1)
     ].copy()
-    print(f"step9_前10大重仓股筛选后：{len(fund_open_fund_rank_em_df)} 只基金")
-    fund_open_fund_rank_em_df.to_excel("step9_前10大重仓股筛选.xlsx", index=False)
-    
+    print(f"step9_组合筛选后：{len(fund_open_fund_rank_em_df)} 只基金")
+    fund_open_fund_rank_em_df.to_excel("step9_组合筛选.xlsx", index=False)
+
     # 打印调试信息
-    print("\n=== 前10大重仓股筛选调试信息 ===")
-    for i, res in enumerate(debug_holdings_results[:30]):
-        print(f"{i+1}. {res}")
-    if len(debug_holdings_results) > 30:
-        print(f"... 还有 {len(debug_holdings_results)-30} 条")
-    
-    # 持股行业集中度筛选（<40%）
-    print("\n=== 正在进行持股行业集中度筛选 ===")
-    debug_concentration_results = []
-    
-    def filter_by_concentration(concentration_str):
-        try:
-            if pd.isna(concentration_str) or concentration_str == "" or concentration_str == "获取失败":
-                debug_concentration_results.append((concentration_str, "空数据"))
-                return True  # 空数据保留
-            
-            # 提取数字
-            num_match = re.search(r'([\d.]+)', str(concentration_str))
-            if num_match:
-                concentration_value = float(num_match.group(1))
-                in_range = concentration_value < 50
-                debug_concentration_results.append((concentration_str, concentration_value, in_range))
-                return in_range
-            else:
-                debug_concentration_results.append((concentration_str, "无法提取数字"))
-                return True  # 无法解析的保留
-        except Exception as e:
-            debug_concentration_results.append((concentration_str, f"异常：{e}"))
-            return True  # 异常保留
-    
-    fund_open_fund_rank_em_df = fund_open_fund_rank_em_df[
-        fund_open_fund_rank_em_df["持股行业集中度"].apply(filter_by_concentration)
-    ].copy()
-    print(f"step10_持股行业集中度筛选后：{len(fund_open_fund_rank_em_df)} 只基金")
-    fund_open_fund_rank_em_df.to_excel("step10_持股行业集中度筛选.xlsx", index=False)
-    
-    # 打印调试信息
-    print("\n=== 持股行业集中度筛选调试信息 ===")
-    for i, res in enumerate(debug_concentration_results[:30]):
-        print(f"{i+1}. {res}")
-    if len(debug_concentration_results) > 30:
-        print(f"... 还有 {len(debug_concentration_results)-30} 条")
+    print("\n=== 组合筛选调试信息（前30条） ===")
+    for i, res in enumerate(debug_combined_results[:30]):
+        print(f"{i+1}. 重仓股={res[0]}, 集中度={res[1]}, 乘积={res[2]}, 结果={res[3]}")
+    if len(debug_combined_results) > 30:
+        print(f"... 还有 {len(debug_combined_results)-30} 条")
     
     print(f"\n最终筛选后剩余 {len(fund_open_fund_rank_em_df)} 只基金")
     
