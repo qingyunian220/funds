@@ -1300,8 +1300,8 @@ def analyze_funds():
     if len(debug_scale_results) > 30:
         print(f"... 还有 {len(debug_scale_results)-30} 条")
     
-    # 组合筛选：持股行业集中度 * 前10大重仓股占比 < 0.20
-    print("\n=== 正在进行组合筛选（持股行业集中度 × 前10大重仓股占比 < 0.20） ===")
+    # 组合筛选：前10大重仓股占比 < 40% 且 持股行业集中度 * 前10大重仓股占比 < 0.20
+    print("\n=== 正在进行组合筛选（前10大重仓股占比 < 40% 且 持股行业集中度 × 前10大重仓股占比 < 0.20） ===")
     debug_combined_results = []
 
     def parse_percent(value_str):
@@ -1329,11 +1329,15 @@ def analyze_funds():
             ))
             return True
 
-        product = holdings_val * concentration_val
-        in_range = product < 0.20
+        # 前10大重仓股占比 < 40% 且 持股行业集中度 * 前10大重仓股占比 < 0.20
+        holdings_ok = holdings_val < 0.40
+        product_ok = (concentration_val * holdings_val) < 0.20
+        in_range = holdings_ok and product_ok
         debug_combined_results.append((
             f"{holdings_val*100:.2f}%", f"{concentration_val*100:.2f}%",
-            f"{product:.4f}", in_range
+            f"{concentration_val*holdings_val:.4f}",
+            f"重仓股{'✓' if holdings_ok else '✗'}(<40%) {'✓' if product_ok else '✗'}(<0.20)",
+            in_range
         ))
         return in_range
 
@@ -1345,8 +1349,9 @@ def analyze_funds():
 
     # 打印调试信息
     print("\n=== 组合筛选调试信息（前30条） ===")
+    print(f"{'#':>3}  {'重仓股':>8}  {'集中度':>8}  {'乘积':>7}  {'条件':>30}  {'通过':>4}")
     for i, res in enumerate(debug_combined_results[:30]):
-        print(f"{i+1}. 重仓股={res[0]}, 集中度={res[1]}, 乘积={res[2]}, 结果={res[3]}")
+        print(f"{i+1:>3}. {res[0]:>8}  {res[1]:>8}  {res[2]:>7}  {res[3]:>30}  {res[4]}")
     if len(debug_combined_results) > 30:
         print(f"... 还有 {len(debug_combined_results)-30} 条")
     
