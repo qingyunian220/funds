@@ -105,6 +105,37 @@
             white-space: nowrap;
         }
         
+        th.sortable {
+            cursor: pointer;
+            user-select: none;
+            position: relative;
+            transition: background-color 0.2s;
+        }
+        
+        th.sortable:hover {
+            background-color: #eef6ff;
+            color: #1e9fff;
+        }
+        
+        th.sortable::after {
+            content: '⇅';
+            margin-left: 5px;
+            opacity: 0.3;
+            font-size: 12px;
+        }
+        
+        th.sortable.sort-asc::after {
+            content: '↑';
+            opacity: 1;
+            color: #1e9fff;
+        }
+        
+        th.sortable.sort-desc::after {
+            content: '↓';
+            opacity: 1;
+            color: #1e9fff;
+        }
+        
         tr:hover {
             background-color: #fafafa;
         }
@@ -214,6 +245,35 @@
     
     <script>
         let allData = [];
+        // 排序状态：{ key: '近1年超额', direction: 'asc' | 'desc' }
+        let sortState = { key: null, direction: 'asc' };
+        
+        // 列配置：定义可排序列的取值方式
+        const SORT_COLUMNS = {
+            //'基金代码': { type: 'string', getter: r => r['基金代码'] || '' },
+            // '基金简称': { type: 'string', getter: r => r['基金简称'] || '' },
+            '近1月超额': { type: 'number', getter: r => parseFloat(r['近1月超额']) },
+            '近3月超额': { type: 'number', getter: r => parseFloat(r['近3月超额']) },
+            '近6月超额': { type: 'number', getter: r => parseFloat(r['近6月超额']) },
+            '近1年超额': { type: 'number', getter: r => parseFloat(r['近1年超额']) },
+            //'成立时间': { type: 'date', getter: r => {
+            //    const v = r['成立时间'];
+            //    if (!v) return 0;
+            //    const t = Date.parse(String(v).replace(/-/g, '/'));
+            //    return isNaN(t) ? 0 : t;
+            //}},
+            '最新规模': { type: 'number', getter: r => parseFloat(r['最新规模']) },
+            '换手率': { type: 'number', getter: r => parseFloat(r['换手率']) },
+            '前10大重仓股占比': { type: 'number', getter: r => parseFloat(r['前10大重仓股占比']) },
+            '持股行业集中度': { type: 'number', getter: r => {
+                const v = r['持股行业集中度'];
+                if (!v) return NaN;
+                const m = String(v).match(/(\d+\.?\d*)/);
+                return m ? parseFloat(m[1]) : NaN;
+            }},
+            '管理总规模': { type: 'number', getter: r => parseFloat(r['管理总规模']) },
+            '稳定性评分': { type: 'number', getter: r => parseFloat(r['稳定性评分']) }
+        };
         
         // 页面加载时获取数据
         $(document).ready(function() {
@@ -247,20 +307,20 @@
                     <thead>
                         <tr>
                             <th>序号</th>
-                            <th>基金代码</th>
-                            <th>基金简称</th>
-                            <th>近1月超额</th>
-                            <th>近3月超额</th>
-                            <th>近6月超额</th>
-                            <th>近1年超额</th>
-                            <th>成立时间</th>
-                            <th>最新规模</th>
-                            <th>换手率</th>
-                            <th>前10大重仓股占比</th>
-                            <th>持股行业集中度</th>
-                            <th>管理总规模</th>
+                            <th  data-sort-key="基金代码">基金代码</th>
+                            <th  data-sort-key="基金简称">基金简称</th>
+                            <th class="sortable" data-sort-key="近1月超额">近1月超额</th>
+                            <th class="sortable" data-sort-key="近3月超额">近3月超额</th>
+                            <th class="sortable" data-sort-key="近6月超额">近6月超额</th>
+                            <th class="sortable" data-sort-key="近1年超额">近1年超额</th>
+                            <th data-sort-key="成立时间">成立时间</th>
+                            <th class="sortable" data-sort-key="最新规模">最新规模</th>
+                            <th class="sortable" data-sort-key="换手率">换手率</th>
+                            <th class="sortable" data-sort-key="前10大重仓股占比">前10大重仓股占比</th>
+                            <th class="sortable" data-sort-key="持股行业集中度">持股行业集中度</th>
+                            <th class="sortable" data-sort-key="管理总规模">管理总规模</th>
                             <th>超额收益曲线</th>
-                            <th>稳定性评分</th>
+                            <th class="sortable" data-sort-key="稳定性评分">稳定性评分</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -297,10 +357,68 @@
             
             $('#table-container').html(html);
             
+            // 恢复表头排序状态显示
+            updateSortIndicators();
+            
+            // 绑定表头点击事件
+            bindSortEvents();
+            
             // 延迟渲染迷你图
             setTimeout(function() {
                 renderMiniCharts(allData);
             }, 100);
+        }
+        
+        // 绑定表头点击事件
+        function bindSortEvents() {
+            $('#table-container th.sortable').on('click', function() {
+                const key = $(this).data('sort-key');
+                if (!key || !SORT_COLUMNS[key]) return;
+                
+                if (sortState.key === key) {
+                    sortState.direction = sortState.direction === 'asc' ? 'desc' : 'asc';
+                } else {
+                    sortState.key = key;
+                    sortState.direction = 'desc';
+                }
+                
+                sortData();
+                renderTable();
+            });
+        }
+        
+        // 排序数据
+        function sortData() {
+            const col = SORT_COLUMNS[sortState.key];
+            if (!col) return;
+            const dir = sortState.direction === 'asc' ? 1 : -1;
+            const getter = col.getter;
+            
+            allData.sort(function(a, b) {
+                let va = getter(a);
+                let vb = getter(b);
+                
+                if (col.type === 'number' || col.type === 'date') {
+                    const na = isNaN(va) ? -Infinity : va;
+                    const nb = isNaN(vb) ? -Infinity : vb;
+                    return (na - nb) * dir;
+                } else {
+                    va = String(va || '');
+                    vb = String(vb || '');
+                    return va.localeCompare(vb, 'zh-CN') * dir;
+                }
+            });
+        }
+        
+        // 更新表头排序状态指示
+        function updateSortIndicators() {
+            $('#table-container th.sortable').removeClass('sort-asc sort-desc');
+            if (sortState.key) {
+                const $th = $('#table-container th.sortable[data-sort-key="' + sortState.key + '"]');
+                if ($th.length) {
+                    $th.addClass(sortState.direction === 'asc' ? 'sort-asc' : 'sort-desc');
+                }
+            }
         }
         
         // 格式化百分比
