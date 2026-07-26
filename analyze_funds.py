@@ -165,7 +165,7 @@ def get_fund_nav_history(fund_code, days=365):
 
 def get_csi_all_share_history(days=365):
     """
-    获取中证全指(000985)近N天的净值数据
+    获取太平中证1000(015467)近N天的净值数据
 
     参数
     ------
@@ -175,7 +175,7 @@ def get_csi_all_share_history(days=365):
     返回
     ------
     pd.DataFrame or None
-        包含日期和收盘指数的DataFrame，获取失败返回None
+        包含日期和净值的DataFrame，获取失败返回None
     """
     try:
         # 禁用代理设置
@@ -184,25 +184,25 @@ def get_csi_all_share_history(days=365):
         os.environ['http_proxy'] = ''
         os.environ['https_proxy'] = ''
         
-        print(f"  正在获取中证全指(sh000985)数据...")
+        print(f"  正在获取太平中证1000(015467)数据...")
         
-        # 使用腾讯证券接口获取数据
-        df = ak.stock_zh_index_daily_tx(symbol="sh000985")
+        # 使用基金净值接口获取数据
+        df = ak.fund_open_fund_info_em(symbol="015467", indicator="累计净值走势")
         
         if df is None or df.empty:
-            print(f"  失败: 中证全指获取不到数据")
+            print(f"  失败: 太平中证1000获取不到数据")
             return None
         
         print(f"  ✓ 数据获取成功！")
         
-        # 重命名列名（英文 -> 中文）
-        df = df.rename(columns={
-            'date': '日期',
-            'close': '收盘'
-        })
-        
-        # 确保日期列是 datetime 类型
-        df['日期'] = pd.to_datetime(df['日期'])
+        # 确保日期列是datetime类型
+        if '净值日期' in df.columns:
+            df['日期'] = pd.to_datetime(df['净值日期'])
+        elif '日期' in df.columns:
+            df['日期'] = pd.to_datetime(df['日期'])
+        else:
+            print(f"  失败: 太平中证1000数据中没有日期列")
+            return None
         
         # 按日期升序排序
         df = df.sort_values(by='日期').reset_index(drop=True)
@@ -214,18 +214,25 @@ def get_csi_all_share_history(days=365):
         df = df[df['日期'] >= cutoff_date].copy()
         
         # 只保留需要的列
-        df = df[['日期', '收盘']]
-        df = df.rename(columns={'收盘': '指数'})
-        
-        if len(df) == 0:
-            print(f"  失败: 中证全指无数据")
+        if '累计净值' in df.columns:
+            df = df[['日期', '累计净值']]
+            df = df.rename(columns={'累计净值': '指数'})
+        elif '净值' in df.columns:
+            df = df[['日期', '净值']]
+            df = df.rename(columns={'净值': '指数'})
+        else:
+            print(f"  失败: 太平中证1000数据中没有净值列")
             return None
         
-        print(f"  成功: 中证全指获取到 {len(df)} 条数据")
+        if len(df) == 0:
+            print(f"  失败: 太平中证1000无数据")
+            return None
+        
+        print(f"  成功: 太平中证1000获取到 {len(df)} 条数据")
         return df
     
     except Exception as e:
-        print(f"  失败: 获取中证全指异常: {e}")
+        print(f"  失败: 获取太平中证1000异常: {e}")
         import traceback
         traceback.print_exc()
         return None
@@ -307,7 +314,7 @@ def calculate_excess_return_curve(fund_df, benchmark_df):
 
 def get_excess_return_curve_for_fund(fund_code, days=365, benchmark_df=None):
     """
-    一站式获取基金相对中证全指的超额收益曲线
+    一站式获取基金相对太平中证1000的超额收益曲线
 
     参数
     ------
@@ -316,7 +323,7 @@ def get_excess_return_curve_for_fund(fund_code, days=365, benchmark_df=None):
     days : int
         天数，默认365天
     benchmark_df : pd.DataFrame, optional
-        预先获取的中证全指数据，如果提供则不再重复获取
+        预先获取的太平中证1000数据，如果提供则不再重复获取
 
     返回
     ------
@@ -401,23 +408,30 @@ def calculate_stability_score(curve_json):
 
         positive_ratio = np.sum(np.diff(values) >= 0) / (n - 1) if n > 1 else 0
 
-        volatility_penalty = max(0, 1 - (volatility / 0.035))
-        drawdown_penalty = max(0, 1 - (max_drawdown / 0.075))
+        final_return = values[-1]
 
-        if volatility > 0.025:
+        volatility_penalty = max(0, 1 - (volatility / 0.06))
+        drawdown_penalty = max(0, 1 - (max_drawdown / 0.25))
+
+        if volatility > 0.045:
             volatility_penalty = volatility_penalty * 0.98
-        if volatility > 0.03:
+        if volatility > 0.05:
             volatility_penalty = volatility_penalty * 0.92
 
-        if max_drawdown > 0.08:
+        if max_drawdown > 0.18:
             drawdown_penalty = drawdown_penalty * 0.98
 
+        slope_score = max(0, min(slope * 1000, 1))
+
+        return_score = min(final_return * 3, 1)
+
         stability_score = (
-            r_squared * 0.42 +
-            positive_ratio * 0.28 +
+            r_squared * 0.15 +
+            positive_ratio * 0.22 +
             drawdown_penalty * 0.16 +
             volatility_penalty * 0.08 +
-            min(slope * 1000, 1) * 0.06
+            slope_score * 0.09 +
+            return_score * 0.30
         )
 
         return int(round(stability_score * 100))
@@ -896,10 +910,10 @@ def get_csi_all_share_returns():
         os.environ['http_proxy'] = ''
         os.environ['https_proxy'] = ''
         
-        print("正在获取中证全指(sh000985)数据...")
+        print("正在获取太平中证1000(015467)数据...")
         
-        # 使用腾讯证券接口获取数据
-        df = ak.stock_zh_index_daily_tx(symbol="sh000985")
+        # 使用基金净值接口获取数据
+        df = ak.fund_open_fund_info_em(symbol="015467", indicator="累计净值走势")
         
         if df is None or df.empty:
             print("获取数据失败：返回空数据，使用默认数据...")
@@ -907,20 +921,29 @@ def get_csi_all_share_returns():
         
         print("[OK] 数据获取成功！")
         
-        # 重命名列名（英文 -> 中文）
-        df = df.rename(columns={
-            'date': '日期',
-            'close': '收盘'
-        })
+        # 确保日期列是datetime类型
+        if '净值日期' in df.columns:
+            df['日期'] = pd.to_datetime(df['净值日期'])
+        elif '日期' in df.columns:
+            df['日期'] = pd.to_datetime(df['日期'])
+        else:
+            print("获取数据失败：没有日期列，使用默认数据...")
+            return {"近3年":25.33,"近2年":49.90,"近1年":33.97,"今年来":5.95,"近6月":8.63,"近3月":-1.35,"近1月":9.57}
         
-        # 确保日期列是 datetime 类型
-        df['日期'] = pd.to_datetime(df['日期'])
+        # 获取净值列
+        if '累计净值' in df.columns:
+            value_col = '累计净值'
+        elif '净值' in df.columns:
+            value_col = '净值'
+        else:
+            print("获取数据失败：没有净值列，使用默认数据...")
+            return {"近3年":25.33,"近2年":49.90,"近1年":33.97,"今年来":5.95,"近6月":8.63,"近3月":-1.35,"近1月":9.57}
         
         # 按日期降序排序
         df = df.sort_values('日期', ascending=False).reset_index(drop=True)
 
         latest_date = df.iloc[0]['日期']
-        latest_value = df.iloc[0]['收盘']
+        latest_value = df.iloc[0][value_col]
 
         period_mapping = {
             '近1月': 30,
@@ -938,7 +961,7 @@ def get_csi_all_share_returns():
             target_row = df.iloc[(df['日期'] - target_date).abs().argsort()[:1]]
 
             if not target_row.empty:
-                target_value = target_row.iloc[0]['收盘']
+                target_value = target_row.iloc[0][value_col]
                 return_rate = (latest_value - target_value) / target_value * 100
                 period_returns[period_name] = round(return_rate, 2)
             else:
@@ -947,19 +970,19 @@ def get_csi_all_share_returns():
         start_of_year = datetime(latest_date.year, 1, 1)
         target_row = df.iloc[(df['日期'] - start_of_year).abs().argsort()[:1]]
         if not target_row.empty:
-            target_value = target_row.iloc[0]['收盘']
+            target_value = target_row.iloc[0][value_col]
             return_rate = (latest_value - target_value) / target_value * 100
             period_returns['今年来'] = round(return_rate, 2)
         else:
             period_returns['今年来'] = 0
 
-        print(f"中证全指(sh000985)最新日期：{latest_date.strftime('%Y-%m-%d')}")
-        print(f"中证全指各时间段收益率：{period_returns}")
+        print(f"太平中证1000(015467)最新日期：{latest_date.strftime('%Y-%m-%d')}")
+        print(f"太平中证1000各时间段收益率：{period_returns}")
 
         return period_returns
 
     except Exception as e:
-        print(f"自动获取中证全指数据失败：{e}")
+        print(f"自动获取太平中证1000数据失败：{e}")
         print("使用默认数据...")
         return {"近3年":25.33,"近2年":49.90,"近1年":33.97,"今年来":5.95,"近6月":8.63,"近3月":-1.35,"近1月":9.57}
 
@@ -1128,14 +1151,14 @@ def fetch_fund_details(row):
 def analyze_funds():
     zzqz = get_csi_all_share_returns()
     
-    # 预先获取一次中证全指历史数据，供所有基金复用
-    print("正在预先获取中证全指历史数据...")
+    # 预先获取一次太平中证1000历史数据，供所有基金复用
+    print("正在预先获取太平中证1000历史数据...")
     benchmark_df = get_csi_all_share_history(days=365)
     if benchmark_df is None or benchmark_df.empty:
-        print("警告：无法获取中证全指数据，将在每只基金中单独获取")
+        print("警告：无法获取太平中证1000数据，将在每只基金中单独获取")
         benchmark_df = None
     else:
-        print(f"成功获取中证全指数据：{len(benchmark_df)} 条记录")
+        print(f"成功获取太平中证1000数据：{len(benchmark_df)} 条记录")
 
     print("正在获取基金排名数据...")
     fund_open_fund_rank_em_df = ak.fund_open_fund_rank_em(symbol="全部")
@@ -1145,8 +1168,8 @@ def analyze_funds():
     # 第一步：先做不需要API的快速筛选
     print("正在进行初步筛选...")
     
-    # 过滤掉数据为空的（近1年可以为空）
-    fund_open_fund_rank_em_df = fund_open_fund_rank_em_df.dropna(subset=['近6月', '近3月', '近1月']).copy()
+    # 过滤掉数据为空的（近1年、近6月、近3月、近1月均不能为空）
+    fund_open_fund_rank_em_df = fund_open_fund_rank_em_df.dropna(subset=['近1年', '近6月', '近3月', '近1月']).copy()
     print(f"step2_去空值后：{len(fund_open_fund_rank_em_df)} 只基金")
     fund_open_fund_rank_em_df.to_excel("step2_去空值.xlsx", index=False)
     
@@ -1160,8 +1183,9 @@ def analyze_funds():
     print(f"step3_关键词过滤后：{len(fund_open_fund_rank_em_df)} 只基金")
     fund_open_fund_rank_em_df.to_excel("step3_关键词过滤.xlsx", index=False)
     
-    # 业绩筛选（近1年不强制要求，保留近6月/3月/1月）
+    # 业绩筛选（近1年、近6月、近3月均需大于太平中证1000）
     fund_open_fund_rank_em_df = fund_open_fund_rank_em_df[
+        (fund_open_fund_rank_em_df["近1年"] >= zzqz["近1年"]) &
         (fund_open_fund_rank_em_df["近6月"] >= zzqz["近6月"]) &
         (fund_open_fund_rank_em_df["近3月"] >= zzqz["近3月"]) &
         (fund_open_fund_rank_em_df["近1月"] >= zzqz["近1月"])
@@ -1361,9 +1385,9 @@ def analyze_funds():
     print("\n正在为最终筛选出的基金获取超额收益曲线...")
     fund_open_fund_rank_em_df.loc[:, "超额收益曲线"] = ""
     
-    # 为避免重复获取，先检查是否已获取过中证全指数据
+    # 为避免重复获取，先检查是否已获取过太平中证1000数据
     if benchmark_df is None:
-        print("重新获取中证全指数据...")
+        print("重新获取太平中证1000数据...")
         benchmark_df = get_csi_all_share_history(days=365)
     
     if benchmark_df is not None and not benchmark_df.empty:
@@ -1386,7 +1410,7 @@ def analyze_funds():
         print(f"step12_超额收益曲线获取完成，共 {len(fund_open_fund_rank_em_df)} 只基金")
         fund_open_fund_rank_em_df.to_excel("step12_含超额收益曲线.xlsx", index=False)
     else:
-        print("警告：无法获取中证全指数据，跳过超额收益曲线获取")
+        print("警告：无法获取太平中证1000数据，跳过超额收益曲线获取")
     
     # step13：根据超额收益曲线计算稳定性评分
     print("\n正在计算稳定性评分...")
@@ -1410,7 +1434,7 @@ def analyze_funds():
     # 按稳定性评分倒序排序，只保留60分以上的
     if "稳定性评分" in df_export.columns:
         df_export = df_export[df_export["稳定性评分"].notna()]
-        df_export = df_export[df_export["稳定性评分"] >= 60]
+        df_export = df_export[df_export["稳定性评分"] >= 40]
         df_export = df_export.sort_values(by="稳定性评分", ascending=False)
         print(f"筛选完成：保留稳定性评分60分以上共 {len(df_export)} 只基金")
     elif "近6月超额" in df_export.columns:
