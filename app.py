@@ -1,5 +1,5 @@
 
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, send_file
 from urllib.parse import quote
 import json
 import os
@@ -49,7 +49,100 @@ except ImportError:
 
 @app.route('/')
 def index():
-    return render_template('quant_fund_ranking.html')
+    return render_template('index.html')
+
+@app.route('/fund_ranking')
+def fund_ranking():
+    from enhanced_index import SELECTED_FUND_TYPES
+    return render_template('fund_ranking.html', selected_fund_types=SELECTED_FUND_TYPES)
+
+@app.route('/chart_image')
+def chart_image():
+    """提供超额收益曲线图片"""
+    fund_type = request.args.get('fund_type', '')
+    if not fund_type:
+        return '', 404
+    filename = f'{fund_type}基金_超额曲线.png'
+    if os.path.exists(filename):
+        return send_file(filename, mimetype='image/png')
+    return '', 404
+
+@app.route('/chart_data')
+def chart_data():
+    """提供超额收益曲线JSON数据，供前端ECharts渲染"""
+    fund_type = request.args.get('fund_type', '')
+    if not fund_type:
+        return jsonify({'code': 1, 'msg': '缺少fund_type参数'})
+    json_filename = f'{fund_type}基金_超额曲线.json'
+    if not os.path.exists(json_filename):
+        return jsonify({'code': 1, 'msg': '曲线数据不存在，请先运行 enhanced_index.py'})
+    try:
+        with open(json_filename, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return jsonify({'code': 0, 'data': data})
+    except Exception as e:
+        return jsonify({'code': 1, 'msg': str(e)})
+
+@app.route('/get_fund_data')
+def get_fund_data():
+    """从 index-fund.xlsx 读取指定工作表的数据"""
+    sheet = request.args.get('sheet', '')
+    if not sheet:
+        return jsonify({'code': 1, 'msg': '缺少sheet参数', 'count': 0, 'data': []})
+
+    limit = request.args.get('limit', type=int)
+    sort_by = request.args.get('sort_by', '近1年超额')
+
+    EXCEL_FILE = 'index-fund.xlsx'
+    if not os.path.exists(EXCEL_FILE):
+        return jsonify({'code': 1, 'msg': 'Excel文件不存在', 'count': 0, 'data': []})
+
+    try:
+        df = pd.read_excel(EXCEL_FILE, sheet_name=sheet)
+        df = df.replace({np.nan: None})
+
+        # 处理基金代码，确保为6位字符串格式
+        if '基金代码' in df.columns:
+            df['基金代码'] = df['基金代码'].apply(
+                lambda x: str(int(x)).zfill(6) if isinstance(x, (int, float)) and not pd.isna(x) else str(x).zfill(6) if x is not None else ''
+            )
+
+        # 处理日期类型
+        for col in df.columns:
+            if pd.api.types.is_datetime64_any_dtype(df[col]):
+                df[col] = df[col].apply(lambda x: x.strftime('%Y-%m-%d') if pd.notna(x) else None)
+
+        # 排序并截取前 N 条
+        if limit and limit > 0:
+            if sort_by in df.columns:
+                df[sort_by] = pd.to_numeric(df[sort_by], errors='coerce')
+                df = df.sort_values(by=sort_by, ascending=False).head(limit)
+            else:
+                df = df.head(limit)
+
+        total = len(df)
+        data = df.to_dict('records')
+
+        response_data = {
+            'code': 0,
+            'msg': 'success',
+            'count': total,
+            'data': data
+        }
+        response_json = json.dumps(response_data, ensure_ascii=False)
+        return app.response_class(
+            response=response_json,
+            status=200,
+            mimetype='application/json'
+        )
+    except Exception as e:
+        response_data = {'code': 1, 'msg': str(e), 'count': 0, 'data': []}
+        response_json = json.dumps(response_data, ensure_ascii=False)
+        return app.response_class(
+            response=response_json,
+            status=200,
+            mimetype='application/json'
+        )
 
 @app.route('/quant_fund_ranking')
 def quant_fund_ranking():
@@ -138,7 +231,11 @@ def get_excess_curve(fund_code):
                                         last = excess_curve[-1]
                                         print(f"  起始: {first['date']} = {first['excess_return']*100:.2f}%")
                                         print(f"  结束: {last['date']} = {last['excess_return']*100:.2f}%")
-                                    return jsonify({'code': 0, 'data': excess_curve})
+                                
+                                result = {'code': 0, 'data': excess_curve}
+                                if '近1年' in df.columns:
+                                    result['annual_return'] = float(fund_row.iloc[0]['近1年']) if pd.notna(fund_row.iloc[0]['近1年']) else None
+                                return jsonify(result)
                             except Exception as e:
                                 print(f"解析 Excel 中的超额收益曲线失败: {e}")
             except Exception as e:
@@ -308,5 +405,103 @@ def export_pdf():
         traceback.print_exc()
         return jsonify({'code': 1, 'msg': f'PDF生成失败: {str(e)}'}), 500
 
+@app.route('/export_fund_ranking_pdf')
+def export_fund_ranking_pdf():
+    """使用 Playwright 将基金排名页面导出为 PDF"""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return jsonify({'code': 1, 'msg': 'Playwright 未安装，请运行: pip install playwright && playwright install chromium'}), 503
+
+    try:
+        port = request.environ.get('SERVER_PORT', 5001)
+        url = f'http://127.0.0.1:{port}/fund_ranking?print=1'
+
+        # 使用较宽的视口，确保表格完整显示，再由 Playwright 自动缩放至 A4 PDF
+        # Layui 表格列宽总和约 1400px，需要视口大于此值
+        VP_W, VP_H = 1600, 900
+
+        # 注入到页面最前面的样式（在用户 CSS 之前生效）
+        pre_css = '''
+            html, body { margin: 0 !important; padding: 0 !important; width: 100% !important; }
+            .layui-container { padding: 10px !important; margin: 0 !important; width: 100% !important; }
+            .layui-elem-field { border: 1px solid #e6e6e6 !important; margin: 15px 0 !important; padding: 0 !important; }
+            .layui-elem-field > legend { display: none !important; }
+            .layui-field-box { padding: 10px !important; margin: 0 !important; }
+            .chart-container { width: 100% !important; margin: 0 0 15px 0 !important; padding: 0 !important; }
+            .echarts-chart { width: 100% !important; height: 450px !important; }
+            .echarts-chart canvas { width: 100% !important; height: 450px !important; }
+            .table-scroll-container { width: 100% !important; overflow: visible !important; }
+            .layui-table-view { width: 100% !important; }
+            .layui-table { width: 100% !important; }
+        '''
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page(viewport={'width': VP_W, 'height': VP_H})
+
+            # 在页面加载前注入样式（拦截 HTML 响应，在 <head> 中 prepend <style>）
+            # 这样 ECharts 初始化时就能拿到正确的容器宽度
+            def intercept_route(route):
+                response = route.fetch()
+                body_text = response.text()
+                injected = f'<style>{pre_css}</style>'
+                body_text = body_text.replace('</head>', injected + '</head>', 1)
+                route.fulfill(response=response, body=body_text.encode('utf-8'))
+
+            page.route('**/fund_ranking*', intercept_route)
+            page.goto(url, wait_until='networkidle')
+            page.wait_for_selector('canvas', timeout=30000)
+            page.wait_for_timeout(2000)
+
+            # 强制 ECharts 重新读取容器尺寸并重绘（确保 canvas 像素尺寸匹配容器）
+            page.evaluate('''
+                () => {
+                    if (window.echartsInstances) {
+                        window.echartsInstances.forEach(function(inst) {
+                            try {
+                                var dom = inst.getDom();
+                                var w = dom.clientWidth || dom.offsetWidth;
+                                var h = dom.clientHeight || 450;
+                                inst.resize({width: w, height: h});
+                            } catch(e) {}
+                        });
+                    }
+                }
+            ''')
+            page.wait_for_timeout(2000)
+
+            # 生成 PDF
+            pdf_bytes = page.pdf(
+                format='A4',
+                landscape=True,
+                print_background=True,
+                margin={'top': '10mm', 'bottom': '10mm', 'left': '10mm', 'right': '10mm'},
+                display_header_footer=True,
+                header_template='<div style="font-size:10px;width:100%;text-align:center;color:#666;">指数增强超额收益报告</div>',
+                footer_template='<div style="font-size:9px;width:100%;text-align:center;color:#999;">第 <span class="pageNumber"></span> / <span class="totalPages"></span> 页</div>'
+            )
+            browser.close()
+
+        from io import BytesIO
+        buffer = BytesIO(pdf_bytes)
+        buffer.seek(0)
+
+        import pandas as pd
+        filename = f'指数增强超额收益报告_{pd.Timestamp.now().strftime("%Y%m%d")}.pdf'
+        encoded_filename = quote(filename)
+        return app.response_class(
+            response=buffer.getvalue(),
+            status=200,
+            mimetype='application/pdf',
+            headers={
+                'Content-Disposition': "attachment; filename=\"fund_ranking.pdf\"; filename*=UTF-8''" + encoded_filename
+            }
+        )
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'code': 1, 'msg': f'PDF生成失败: {str(e)}'}), 500
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5001, debug=True)
+    app.run(host='0.0.0.0', port=5001, debug=True, threaded=True)

@@ -116,7 +116,7 @@
                     <div class="module-icon">
                         <span class="layui-icon layui-icon-fire" style="color: #FF5722;"></span>
                     </div>
-                    <div class="module-title">超额基金</div>
+                    <div class="module-title">量化基金</div>
                 </div>
                 <div class="layui-card-body module-card-body">
                     <div class="module-description">
@@ -129,14 +129,14 @@
                         <li>同类基金对比分析</li>
                     </ul>
                     <div class="btn-container">
-                        <a href="/fund" class="layui-btn layui-btn-primary">查看详情</a>
+                        <a href="/quant_fund_ranking" class="layui-btn layui-btn-primary">查看详情</a>
                     </div>
                 </div>
             </div>
         </div>
         
         <!-- AI智能体模块 -->
-        <div class="layui-col-md4">
+        <!-- <div class="layui-col-md4">
             <div class="layui-card module-card">
                 <div class="layui-card-header module-card-header">
                     <div class="module-icon">
@@ -159,7 +159,7 @@
                     </div>
                 </div>
             </div>
-        </div>
+        </div> -->
     </div>
 </div>
 
@@ -210,8 +210,8 @@ layui.use(['jquery', 'layer'], function(){
     $('.layui-card-body .layui-btn').click(function(e) {
         var href = $(this).attr('href');
         
-        // 对"超额基金"和"指数增强"模块的查看详情按钮进行密令验证
-        if(href === '/fund' || href === '/fund_ranking') {
+        // 对"量化基金"和"指数增强"模块的查看详情按钮进行密令验证
+        if(href === '/quant_fund_ranking' || href === '/fund_ranking') {
             e.preventDefault();
             
             // 先检查是否已有有效密令

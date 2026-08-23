@@ -272,7 +272,8 @@
                 return m ? parseFloat(m[1]) : NaN;
             }},
             '管理总规模': { type: 'number', getter: r => parseFloat(r['管理总规模']) },
-            '稳定性评分': { type: 'number', getter: r => parseFloat(r['稳定性评分']) }
+            '稳定性评分': { type: 'number', getter: r => parseFloat(r['稳定性评分']) },
+            '市值评分': { type: 'number', getter: r => parseFloat(r['市值评分']) }
         };
         
         // 页面加载时获取数据
@@ -315,6 +316,7 @@
                             <th class="sortable" data-sort-key="近1年超额">近1年超额</th>
                             <th data-sort-key="成立时间">成立时间</th>
                             <th class="sortable" data-sort-key="最新规模">最新规模</th>
+                            <th class="sortable" data-sort-key="市值评分">市值评分</th>
                             <th class="sortable" data-sort-key="换手率">换手率</th>
                             <th class="sortable" data-sort-key="前10大重仓股占比">前10大重仓股占比</th>
                             <th class="sortable" data-sort-key="持股行业集中度">持股行业集中度</th>
@@ -341,6 +343,7 @@
                 html += `<td>${formatPercent(row['近1年超额'])}</td>`;
                 html += `<td>${row['成立时间'] || ''}</td>`;
                 html += `<td>${row['最新规模'] || ''}</td>`;
+                html += `<td>${formatMarketCapScore(row['市值评分'])}</td>`;
                 html += `<td>${row['换手率'] || ''}</td>`;
                 html += `<td>${row['前10大重仓股占比'] || ''}</td>`;
                 html += `<td>${formatIndustryConcentration(row['持股行业集中度'])}</td>`;
@@ -471,6 +474,30 @@
             return display;
         }
         
+        // 格式化市值评分
+        function formatMarketCapScore(value) {
+            if (value === null || value === undefined || value === '') {
+                return '';
+            }
+            const num = parseFloat(value);
+            if (isNaN(num)) {
+                return '';
+            }
+            let colorClass = '';
+            if (num > 0 && num < 25) {
+                colorClass = 'positive-number';
+            } else if (num >= 25 && num < 50) {
+                colorClass = '';
+            } else if (num >= 50) {
+                colorClass = 'negative-number';
+            }
+            const display = Math.round(num);
+            if (colorClass) {
+                return `<span class="${colorClass}">${display}</span>`;
+            }
+            return display;
+        }
+        
         // 渲染迷你图
         function renderMiniCharts(pageData) {
             console.log("=== 开始渲染迷你图 ===");
@@ -509,6 +536,8 @@
                             const dates = data.map(item => item.date);
                             const returns = data.map(item => item.excess_return * 100);
                             
+                            const annualReturn = response.annual_return !== undefined ? response.annual_return : null;
+                            
                             console.log(`[${index}] ${fundCode} 解析结果: ${dates.length}个点`);
                             console.log(`[${index}] ${fundCode} 前3个点:`, returns.slice(0, 3));
                             console.log(`[${index}] ${fundCode} 后3个点:`, returns.slice(-3));
@@ -516,7 +545,18 @@
                             const lastValue = returns.length > 0 ? returns[returns.length - 1] : 0;
                             const lineColor = lastValue >= 0 ? '#ff5722' : '#16b777';
                             
-                            console.log(`[${index}] ${fundCode} 最终超额: ${lastValue.toFixed(2)}%, 颜色: ${lineColor}`);
+                            let yAxisMax, yAxisMin;
+                            if (annualReturn !== null && !isNaN(annualReturn)) {
+                                yAxisMax = Math.ceil(annualReturn / 10) * 10;
+                                yAxisMin = 0;
+                            } else {
+                                const maxReturn = returns.length > 0 ? Math.max(...returns) : 0;
+                                const minReturn = returns.length > 0 ? Math.min(...returns) : 0;
+                                yAxisMax = Math.ceil(maxReturn / 10) * 10;
+                                yAxisMin = Math.floor(minReturn / 10) * 10;
+                            }
+                            
+                            console.log(`[${index}] ${fundCode} 最终超额: ${lastValue.toFixed(2)}%, 近1年收益: ${annualReturn !== null ? annualReturn.toFixed(2) : 'N/A'}%, Y轴范围: ${yAxisMin}~${yAxisMax}`);
                             
                             const myChart = echarts.init(chartDom);
                             
@@ -537,9 +577,9 @@
                                 yAxis: {
                                     type: 'value',
                                     show: false,
-                                    scale: true,
-                                    min: 'dataMin',
-                                    max: 'dataMax'
+                                    scale: false,
+                                    min: yAxisMin,
+                                    max: yAxisMax
                                 },
                                 series: [{
                                     data: returns,

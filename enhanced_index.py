@@ -21,6 +21,20 @@ from fund_search_parser import fetch_and_parse_fund_search
 from jiuquan_fund import parse_fund_data
 from jiuquaner_fund_style import get_fund_list, batch_get_style
 
+# 绘图相关（参考 analyze_funds.py 计算超额收益曲线）
+import matplotlib
+matplotlib.use('Agg')  # 非交互式后端，避免无显示环境报错
+import matplotlib.pyplot as plt
+
+# 设置中文字体，避免图表中文乱码
+plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'Arial Unicode MS']
+plt.rcParams['axes.unicode_minus'] = False
+
+from analyze_funds import get_fund_nav_history, calculate_excess_return_curve
+
+# 当前选中的基金类型（由 update_fund_data 设置，供 app.py 读取控制页面显示）
+SELECTED_FUND_TYPES = ["A500", "中证500", "中证1000", "国证2000"]
+
 # # Flask应用配置
 # app = Flask(__name__)
 # app.config['JSON_AS_ASCII'] = False
@@ -350,53 +364,317 @@ def save_to_excel(writer, fund_df, sheet_name):
         print(f"没有 {sheet_name} 数据可保存")
 
 def highlight_excess_returns(df):
-    """为超额收益率表格添加样式标记"""
+    """为超额收益率表格添加样式标记：正值标黄，至少3列正值的基金简称标金"""
     # 创建一个样式DataFrame，默认为空字符串（无样式）
     styles = pd.DataFrame('', index=df.index, columns=df.columns)
 
-    # 定义超额收益率列
-    excess_return_columns = ['近1周超额', '近1月超额', '近3月超额', '近6月超额', '近1年超额', '近2年超额', '近3年超额', '今年来超额']
+    # 定义参与标黄/标金的超额收益率列（排除近1周、近2年、近3年）
+    excess_return_columns = ['近1月超额', '近3月超额', '近6月超额', '近1年超额', '今年来超额']
 
-    # 记录每个基金在多少个超额收益率列中进入前10
-    top_count = {idx: 0 for idx in df.index}
+    # 记录每个基金有多少个超额收益率列为正值
+    positive_count = {idx: 0 for idx in df.index}
 
-    # 对每个超额收益率列，标记其前10名
+    # 对每个超额收益率列，正值标黄
     for col in excess_return_columns:
         if col in df.columns:
-            # 获取该列排序后的前10个索引
-            top_10_idx = df[col].nlargest(10).index
-            # 将对应位置设置为黄色背景
-            styles.loc[top_10_idx, col] = 'background-color: yellow'
-            # 更新每个基金进入前10的次数
-            for idx in top_10_idx:
-                top_count[idx] += 1
+            positive_idx = df[df[col] > 0].index
+            styles.loc[positive_idx, col] = 'background-color: yellow'
+            for idx in positive_idx:
+                positive_count[idx] += 1
 
-    # 对至少有3列进入前10的基金，将基金简称设置为金黄色背景
-    for idx, count in top_count.items():
-        if count >= 3:  # 至少有3列进入前10
-            # 标注基金简称为金黄色
+    # 对至少有3列为正值的基金，将基金简称设置为金黄色背景
+    for idx, count in positive_count.items():
+        if count >= 3:
             styles.loc[idx, '基金简称'] = 'background-color: gold'
 
     return styles
 
-def calculate_excess_returns(writer):
-    """计算超额收益率并保存到Excel文件"""
+def _retry_call(func, max_retries=3, delay=2):
+    """
+    对网络调用进行重试，避免 IncompleteRead 等网络异常导致整体流程失败
+
+    参数
+    ------
+    func : callable
+        无参数的可调用对象（用 lambda 包装实际调用）
+    max_retries : int
+        最大尝试次数（含首次）
+    delay : int
+        每次重试前的等待秒数
+
+    返回
+    ------
+    func 的返回值；若全部失败则抛出最后一次的异常
+    """
+    last_exc = None
+    for attempt in range(max_retries):
+        try:
+            return func()
+        except Exception as e:
+            last_exc = e
+            if attempt < max_retries - 1:
+                print(f"网络调用失败(第{attempt+1}次): {e}，{delay}秒后重试...")
+                time.sleep(delay)
+    raise last_exc
+
+def plot_excess_return_curves(fund_df, benchmark_code, fund_type, days=365):
+    """
+    为基金绘制超额收益曲线图（参考 analyze_funds.py 的实现）
+    只绘制"金黄色背景"的基金（至少3个超额收益率列为正值）
+
+    参数
+    ------
+    fund_df : pd.DataFrame
+        基金数据，需包含"基金代码"和"基金简称"列，以及超额收益率列
+    benchmark_code : str
+        基准基金代码（如 "510300"）
+    fund_type : str
+        基金类型名称（用于图标题和文件名）
+    days : int
+        历史数据天数，默认365天
+
+    返回
+    ------
+    str or None
+        生成的图片文件名，失败返回None
+    """
+    try:
+        if fund_df is None or fund_df.empty:
+            print(f"{fund_type}基金: 无数据可绘制")
+            return None
+
+        # 排除基准基金本身，避免在走势图和表格中显示
+        if '基金代码' in fund_df.columns:
+            before = len(fund_df)
+            fund_df = fund_df[fund_df['基金代码'].astype(str).str.zfill(6) != str(benchmark_code).zfill(6)].copy()
+            if len(fund_df) < before:
+                print(f"{fund_type}基金: 排除基准基金 {benchmark_code}，剩余 {len(fund_df)} 只")
+
+        # 筛选"金黄色背景"的基金：至少3个超额收益率列为正值
+        excess_return_columns = ['近1月超额', '近3月超额', '近6月超额', '近1年超额', '今年来超额']
+        available_cols = [col for col in excess_return_columns if col in fund_df.columns]
+        
+        if not available_cols:
+            print(f"{fund_type}基金: 无超额收益率列，跳过筛选")
+            selected_df = fund_df
+        else:
+            # 计算每只基金的正收益列数
+            positive_counts = fund_df[available_cols].apply(
+                lambda row: (row > 0).sum(), axis=1
+            )
+            # 保留至少3列为正值的基金
+            mask = positive_counts >= 3
+            selected_df = fund_df[mask].copy()
+            print(f"{fund_type}基金: 从 {len(fund_df)} 只中筛选出 {len(selected_df)} 只正收益列数>=3的基金用于绘图")
+
+            # 兜底：如果无基金满足金黄色条件，按"近6月超额"降序取前3只
+            if selected_df.empty:
+                print(f"{fund_type}基金: 无符合金黄色条件的基金，按'近6月超额'降序取前3只")
+                sort_col = '近6月超额' if '近6月超额' in fund_df.columns else available_cols[0]
+                selected_df = fund_df.sort_values(by=sort_col, ascending=False).head(3).copy()
+                print(f"{fund_type}基金: 兜底选取 {len(selected_df)} 只基金用于绘图")
+
+        if selected_df.empty:
+            print(f"{fund_type}基金: 无符合条件的基金可绘制")
+            return None
+
+        # 获取基准基金净值历史（带重试，避免网络抖动导致整张图缺失）
+        print(f"正在获取基准基金 {benchmark_code} 的净值历史...")
+        benchmark_nav_df = None
+        for attempt in range(3):
+            benchmark_nav_df = get_fund_nav_history(benchmark_code, days)
+            if benchmark_nav_df is not None and not benchmark_nav_df.empty:
+                break
+            print(f"获取基准基金 {benchmark_code} 净值失败(第{attempt+1}次)，2秒后重试...")
+            time.sleep(2)
+        if benchmark_nav_df is None or benchmark_nav_df.empty:
+            print(f"无法获取基准基金 {benchmark_code} 的净值历史，跳过绘图")
+            return None
+
+        # calculate_excess_return_curve 要求基准数据框含"指数"列，这里把"累计净值"重命名
+        benchmark_df = benchmark_nav_df.rename(columns={'累计净值': '指数'})
+
+        # 获取基准基金简称，用于图表标题和图例显示
+        benchmark_name = get_fund_name_by_code(str(benchmark_code)) or str(benchmark_code)
+        display_label = f'{benchmark_name}({benchmark_code})'
+
+        # 并行获取筛选后各基金的净值并计算超额收益曲线
+        curves = []  # 元素: (fund_name, dates, excess_values)
+
+        def fetch_curve(code, name):
+            fund_nav_df = get_fund_nav_history(code, days)
+            if fund_nav_df is None or fund_nav_df.empty:
+                return None
+            curve_data = calculate_excess_return_curve(fund_nav_df, benchmark_df)
+            if curve_data is None or len(curve_data) == 0:
+                return None
+            # 将字符串日期转为 datetime 对象，确保 matplotlib 正确渲染 X 轴
+            dates = [pd.to_datetime(item['date']) for item in curve_data]
+            excess_values = [item['excess_return'] * 100 for item in curve_data]  # 转为百分比
+            return (name, dates, excess_values)
+
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = []
+            for _, row in selected_df.iterrows():
+                code = str(row["基金代码"])
+                name = row.get("基金简称", code)
+                futures.append(executor.submit(fetch_curve, code, name))
+
+            for future in as_completed(futures):
+                try:
+                    result = future.result()
+                    if result is not None:
+                        curves.append(result)
+                except Exception as e:
+                    print(f"获取超额收益曲线失败: {e}")
+
+        if not curves:
+            print(f"{fund_type}基金: 未获取到任何超额收益曲线数据")
+            return None
+
+        # 只保留超额收益最高的3只基金（按曲线末端超额值排序）
+        if len(curves) > 3:
+            total_count = len(curves)
+            curves.sort(key=lambda c: c[2][-1] if c[2] else float('-inf'), reverse=True)
+            curves = curves[:3]
+            print(f"{fund_type}基金: 从 {total_count} 只中保留超额收益最高的3只用于绘图")
+
+        # 绘制图表
+        n_curves = len(curves)
+        # 动态调整画布大小，基金越多图越宽
+        fig_width = max(14, 12 + n_curves * 0.8)
+        fig_height = max(8, 6 + n_curves * 0.4)
+        fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+
+        # 使用差异化配色
+        cmap = plt.cm.get_cmap('tab20', max(n_curves, 1))
+        colors = [cmap(i) for i in range(n_curves)]
+
+        # 绘制基金超额收益曲线
+        for idx, (name, dates, excess_values) in enumerate(curves):
+            ax.plot(dates, excess_values, label=name,
+                    color=colors[idx],
+                    linewidth=1.5,
+                    alpha=0.85)
+            # 在线末端直接标注基金名
+            if len(dates) > 0:
+                last_x = dates[-1]
+                last_y = excess_values[-1]
+                ax.annotate(
+                    name,
+                    xy=(last_x, last_y),
+                    xytext=(5, 0),
+                    textcoords='offset points',
+                    fontsize=7,
+                    va='center',
+                    color=colors[idx],
+                    annotation_clip=True
+                )
+
+        # 基准线：Y=0 的水平线（超额收益为0即基准收益），醒目绘制
+        ax.axhline(y=0, color='black', linewidth=1.8, linestyle='--', alpha=0.85,
+                   label=f'基准: {display_label}', zorder=10)
+        # 在基准线右侧末端标注
+        if curves and len(curves[0][1]) > 0:
+            last_date = curves[0][1][-1]
+            ax.annotate(
+                f'基准: {display_label}',
+                xy=(last_date, 0),
+                xytext=(5, 8),
+                textcoords='offset points',
+                fontsize=8,
+                va='bottom',
+                color='black',
+                fontweight='bold',
+                annotation_clip=True
+            )
+
+        ax.set_title(f'{fund_type}基金超额收益曲线（基准：{display_label}，近{days}天）', fontsize=14)
+        ax.set_xlabel('日期', fontsize=12)
+        ax.set_ylabel('超额收益率 (%)', fontsize=12)
+        ax.grid(True, alpha=0.3)
+
+        # 设置合理的 x 轴刻度数量，避免日期标签过密
+        import matplotlib.dates as mdates
+        sample_dates = curves[0][1] if curves else []
+        n_ticks = min(10, max(3, len(sample_dates) // 30 + 3)) if sample_dates else 6
+        locator = mdates.AutoDateLocator(minticks=max(2, n_ticks - 2), maxticks=n_ticks + 2)
+        ax.xaxis.set_major_locator(locator)
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right', fontsize=8)
+
+        # 将图例置于底部水平排列，紧凑样式（含基准线）
+        legend = ax.legend(
+            loc='upper center',
+            bbox_to_anchor=(0.5, -0.15),
+            ncol=min(4, n_curves + 1),
+            fontsize=8,
+            frameon=True,
+            framealpha=0.8,
+            edgecolor='#ccc'
+        )
+        legend.get_frame().set_linewidth(0.5)
+
+        plt.tight_layout(rect=[0, 0.08, 1, 1])  # 底部留出图例空间
+
+        img_filename = f'{fund_type}基金_超额曲线.png'
+        fig.savefig(img_filename, dpi=150, bbox_inches='tight')
+        plt.close(fig)
+
+        # 保存曲线数据为JSON，供前端ECharts渲染
+        # 每只基金携带自己的日期数据，支持不同成立时间的基金共存
+        json_filename = f'{fund_type}基金_超额曲线.json'
+        chart_data = {
+            'fund_type': fund_type,
+            'benchmark': display_label,
+            'series': [
+                {
+                    'name': c[0],
+                    'dates': [d.strftime('%Y-%m-%d') for d in c[1]],
+                    'data': [round(v, 4) for v in c[2]]
+                } for c in curves
+            ]
+        }
+        with open(json_filename, 'w', encoding='utf-8') as f:
+            json.dump(chart_data, f, ensure_ascii=False, indent=2)
+
+        print(f"{fund_type}基金超额收益曲线已保存为 {img_filename} 和 {json_filename}（共 {len(curves)} 只基金 + 基准）")
+        return img_filename
+
+    except Exception as e:
+        print(f"绘制{fund_type}基金超额收益曲线时出错: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+def calculate_excess_returns(writer, selected_fund_types=None):
+    """计算超额收益率并保存到Excel文件
+    
+    Args:
+        writer: Excel写入器
+        selected_fund_types: 需要处理的基金类型列表，为None时处理全部
+    """
     try:
         # 定义基金类型与基准基金代码的映射关系
         benchmark_map = {
             "沪深300": "510300",
-            "中证500": "512510",
-            "A500":"563360",
+            "中证500": "014306",
+            "A500":"022757",
             "中证800": "515810",
-            "中证1000": "516300",
+            "中证1000": "018014",
             "中证2000": "563300",
-            "国证2000": "159907"
+            "国证2000": "017548"
         }
+        # 如果指定了基金类型，则只处理指定的
+        if selected_fund_types is not None:
+            benchmark_map = {k: v for k, v in benchmark_map.items() if k in selected_fund_types}
         # 定义收益率列
         return_columns = ['近1周', '近1月', '近3月', '近6月', '近1年', '近2年', '近3年', '今年来']
-        # 获取基金排名数据
-        fund_exchange_rank_em_df = ak.fund_exchange_rank_em()
-        fund_open_fund_rank_em_df = ak.fund_open_fund_rank_em(symbol="混合型")
+        # 获取基金排名数据（带重试，避免 IncompleteRead 等网络异常导致整体流程失败）
+        fund_exchange_rank_em_df = _retry_call(lambda: ak.fund_exchange_rank_em())
+        fund_open_fund_rank_em_df = _retry_call(lambda: ak.fund_open_fund_rank_em(symbol="混合型"))
+        fund_open_fund_rank_stock_df = _retry_call(lambda: ak.fund_open_fund_rank_em(symbol="股票型"))
+        fund_open_fund_rank_index_df = _retry_call(lambda: ak.fund_open_fund_rank_em(symbol="指数型"))
         # 为每种基金类型计算超额收益率
         for fund_type, benchmark_code in benchmark_map.items():
             print(f"正在处理{fund_type}基金的超额收益率，基准基金代码：{benchmark_code}")
@@ -411,13 +689,39 @@ def calculate_excess_returns(writer):
             if fund_df.empty:
                 continue
             
-            # 获取基准基金数据
+            # 获取基准基金数据：按场内ETF -> 指数型 -> 股票型 -> 混合型 顺序查找
             benchmark_df = fund_exchange_rank_em_df[fund_exchange_rank_em_df["基金代码"] == benchmark_code]
-            
+            benchmark_source = "场内ETF(fund_exchange_rank_em)"
+
+            if benchmark_df.empty:
+                benchmark_df = fund_open_fund_rank_index_df[fund_open_fund_rank_index_df["基金代码"] == benchmark_code]
+                benchmark_source = "指数型(fund_open_fund_rank_index)"
+
+            if benchmark_df.empty:
+                benchmark_df = fund_open_fund_rank_stock_df[fund_open_fund_rank_stock_df["基金代码"] == benchmark_code]
+                benchmark_source = "股票型(fund_open_fund_rank_stock)"
+
+            if benchmark_df.empty:
+                benchmark_df = fund_open_fund_rank_em_df[fund_open_fund_rank_em_df["基金代码"] == benchmark_code]
+                benchmark_source = "混合型(fund_open_fund_rank_em)"
+
             if benchmark_df.empty:
                 print(f"未找到{fund_type}基金的基准基金{benchmark_code}")
                 continue
-                
+
+            # 打印命中的基准基金信息，便于核对
+            hit_code = benchmark_df["基金代码"].iloc[0]
+            hit_name = benchmark_df["基金简称"].iloc[0] if "基金简称" in benchmark_df.columns else "<无基金简称列>"
+            hit_date = benchmark_df["日期"].iloc[0] if "日期" in benchmark_df.columns else "<无日期列>"
+            print(f"[基准核对] {fund_type} | 期望代码={benchmark_code} | 命中来源={benchmark_source} | 命中代码={hit_code} | 命中名称={hit_name} | 日期={hit_date}")
+
+            # 打印各数据源中是否存在该代码，便于发现重复命中
+            in_etf = (fund_exchange_rank_em_df["基金代码"] == benchmark_code).sum()
+            in_index = (fund_open_fund_rank_index_df["基金代码"] == benchmark_code).sum()
+            in_stock = (fund_open_fund_rank_stock_df["基金代码"] == benchmark_code).sum()
+            in_mixed = (fund_open_fund_rank_em_df["基金代码"] == benchmark_code).sum()
+            print(f"[命中分布] 代码 {benchmark_code} 在各数据源中的命中数量: 场内ETF={in_etf}, 指数型={in_index}, 股票型={in_stock}, 混合型={in_mixed}")
+
             # 获取基准收益率
             benchmark_returns = {}
             for col in return_columns:
@@ -435,16 +739,17 @@ def calculate_excess_returns(writer):
                             benchmark_returns[col] = pd.to_numeric(value, errors='coerce') / 100
                 else:
                     benchmark_returns[col] = 0
+            print(f"[基准收益率] {fund_type}({benchmark_code}): {benchmark_returns}")
             
-            # 计算超额收益率
+            # 计算超额收益率（几何计算法，与走势图保持一致）
             for col in return_columns:
                 if col in fund_df.columns:
                     # 创建超额收益率列名
                     excess_col = f'{col}超额'
                     # 将原始收益率转换为数值
                     fund_df[col] = pd.to_numeric(fund_df[col].astype(str).str.rstrip('%'), errors='coerce') / 100
-                    # 计算超额收益率（保持数值格式）
-                    fund_df[excess_col] = (fund_df[col] - benchmark_returns[col])*100
+                    # 几何超额收益率 = (1 + 基金收益) / (1 + 基准收益) - 1
+                    fund_df[excess_col] = ((1 + fund_df[col]) / (1 + benchmark_returns[col]) - 1) * 100
             
             # 只保留指定的列
             columns_to_keep = ["基金代码", "基金简称", "日期", "近1周超额", "近1月超额", "近3月超额", "近6月超额", 
@@ -461,64 +766,73 @@ def calculate_excess_returns(writer):
             # 保存带有超额收益率的数据，并应用样式
             styled_df = fund_df.style.apply(highlight_excess_returns, axis=None)
             styled_df.to_excel(writer, sheet_name=f'{fund_type}基金_超额', index=False)
-        
-        # 单独处理小微盘基金
-        try:
-            small_fund_df = pd.read_excel('index-fund.xlsx', sheet_name='小微盘')
-            if small_fund_df.empty:
-                return
-            # 小微盘基金使用320016作为基准
-            benchmark_code = "320016"
-            benchmark_df = fund_open_fund_rank_em_df[fund_open_fund_rank_em_df["基金代码"] == benchmark_code]
-            
-            if not benchmark_df.empty:
-                # 获取基准收益率
-                benchmark_returns = {}
-                for col in return_columns:
-                    if col in benchmark_df.columns:
-                        # 处理数值数据，确保正确转换
-                        value = benchmark_df[col].iloc[0]
-                        if pd.isna(value):
-                            benchmark_returns[col] = 0
-                        else:
-                            # 如果是字符串，去除%符号并转换为数值
-                            if isinstance(value, str):
-                                benchmark_returns[col] = pd.to_numeric(value.rstrip('%'), errors='coerce') / 100
+
+            # 绘制超额收益曲线图（参考 analyze_funds.py）
+            plot_excess_return_curves(fund_df, benchmark_code, fund_type)
+
+        # 根据配置决定是否处理小微盘基金超额收益率
+        include_small_in_excess = selected_fund_types is None or "小微盘" in selected_fund_types
+        if include_small_in_excess:
+            try:
+                small_fund_df = pd.read_excel('index-fund.xlsx', sheet_name='小微盘')
+                if small_fund_df.empty:
+                    pass
+                else:
+                    # 小微盘基金使用320016作为基准
+                    benchmark_code = "320016"
+                    benchmark_df = fund_open_fund_rank_em_df[fund_open_fund_rank_em_df["基金代码"] == benchmark_code]
+                    
+                    if not benchmark_df.empty:
+                        # 获取基准收益率
+                        benchmark_returns = {}
+                        for col in return_columns:
+                            if col in benchmark_df.columns:
+                                # 处理数值数据，确保正确转换
+                                value = benchmark_df[col].iloc[0]
+                                if pd.isna(value):
+                                    benchmark_returns[col] = 0
+                                else:
+                                    # 如果是字符串，去除%符号并转换为数值
+                                    if isinstance(value, str):
+                                        benchmark_returns[col] = pd.to_numeric(value.rstrip('%'), errors='coerce') / 100
+                                    else:
+                                        # 如果已经是数值类型，直接使用
+                                        benchmark_returns[col] = pd.to_numeric(value, errors='coerce') / 100
                             else:
-                                # 如果已经是数值类型，直接使用
-                                benchmark_returns[col] = pd.to_numeric(value, errors='coerce') / 100
+                                benchmark_returns[col] = 0
+                        
+                        # 计算超额收益率（几何计算法，与走势图保持一致）
+                        for col in return_columns:
+                            if col in small_fund_df.columns:
+                                # 创建超额收益率列名
+                                excess_col = f'{col}超额'
+                                # 将原始收益率转换为数值
+                                small_fund_df[col] = pd.to_numeric(small_fund_df[col].astype(str).str.rstrip('%'), errors='coerce') / 100
+                                # 几何超额收益率 = (1 + 基金收益) / (1 + 基准收益) - 1
+                                small_fund_df[excess_col] = ((1 + small_fund_df[col]) / (1 + benchmark_returns[col]) - 1) * 100
+                        
+                        # 只保留指定的列
+                        columns_to_keep = ["基金代码", "基金简称", "日期", "近1周超额", "近1月超额", "近3月超额", "近6月超额", 
+                                          "近1年超额", "近2年超额", "近3年超额", "今年来超额", "成立时间", "最新规模", "市值评分", "换手率",
+                                           "前10大重仓股占比", "持股行业集中度"]
+                        # 检查哪些列实际存在于DataFrame中
+                        existing_columns = [col for col in columns_to_keep if col in small_fund_df.columns]
+                        small_fund_df = small_fund_df[existing_columns]
+                        
+                        # 确保基金代码为6位，不足的向前填充0
+                        if "基金代码" in small_fund_df.columns:
+                            small_fund_df["基金代码"] = small_fund_df["基金代码"].astype(str).str.zfill(6)
+                        
+                        # 保存带有超额收益率的数据，并应用样式
+                        styled_df = small_fund_df.style.apply(highlight_excess_returns, axis=None)
+                        styled_df.to_excel(writer, sheet_name='小微盘_超额', index=False)
+
+                        # 绘制超额收益曲线图（参考 analyze_funds.py）
+                        plot_excess_return_curves(small_fund_df, benchmark_code, '小微盘')
                     else:
-                        benchmark_returns[col] = 0
-                
-                # 计算超额收益率
-                for col in return_columns:
-                    if col in small_fund_df.columns:
-                        # 创建超额收益率列名
-                        excess_col = f'{col}超额'
-                        # 将原始收益率转换为数值
-                        small_fund_df[col] = pd.to_numeric(small_fund_df[col].astype(str).str.rstrip('%'), errors='coerce') / 100
-                        # 计算超额收益率（保持数值格式）
-                        small_fund_df[excess_col] = (small_fund_df[col] - benchmark_returns[col])*100
-                
-                # 只保留指定的列
-                columns_to_keep = ["基金代码", "基金简称", "日期", "近1周超额", "近1月超额", "近3月超额", "近6月超额", 
-                                  "近1年超额", "近2年超额", "近3年超额", "今年来超额", "成立时间", "最新规模", "市值评分", "换手率",
-                                   "前10大重仓股占比", "持股行业集中度"]
-                # 检查哪些列实际存在于DataFrame中
-                existing_columns = [col for col in columns_to_keep if col in small_fund_df.columns]
-                small_fund_df = small_fund_df[existing_columns]
-                
-                # 确保基金代码为6位，不足的向前填充0
-                if "基金代码" in small_fund_df.columns:
-                    small_fund_df["基金代码"] = small_fund_df["基金代码"].astype(str).str.zfill(6)
-                
-                # 保存带有超额收益率的数据，并应用样式
-                styled_df = small_fund_df.style.apply(highlight_excess_returns, axis=None)
-                styled_df.to_excel(writer, sheet_name='小微盘_超额', index=False)
-            else:
-                print(f"未找到小微盘基金的基准基金{benchmark_code}")
-        except Exception as e:
-            print(f"处理小微盘基金超额收益率时出错: {e}")
+                        print(f"未找到小微盘基金的基准基金{benchmark_code}")
+            except Exception as e:
+                print(f"处理小微盘基金超额收益率时出错: {e}")
     except Exception as e:
         print(f"计算超额收益率时出错: {e}")
 
@@ -552,23 +866,33 @@ def update_fund_data():
         temp_data = {}
         filename = f'index-fund.xlsx'
         has_data = False
+
+        # 自定义需要输出的基金类型，注释掉的不参与分析
+        # 可选: "沪深300", "中证500", "A500", "中证800", "中证1000", "中证2000", "国证2000", "小微盘"
+        global SELECTED_FUND_TYPES
+        SELECTED_FUND_TYPES = ["A500", "中证500", "中证1000", "国证2000"]
         
-        # 先获取所有基金筛选结果，但不保存到Excel
-        fund_types = ["沪深300", "中证500","A500","中证800", "中证1000", "中证2000","国证2000"]
+        ALL_FUND_TYPES = ["沪深300", "中证500", "A500", "中证800", "中证1000", "中证2000", "国证2000", "小微盘"]
+        fund_types = [t for t in SELECTED_FUND_TYPES if t in ALL_FUND_TYPES and t != "小微盘"]
+        include_small_fund = "小微盘" in SELECTED_FUND_TYPES
         all_fund_codes = []
         
-        # 使用多线程并行处理不同类型的基金数据
-        print(f"开始并行处理 {len(fund_types)} 种指数基金和小微盘基金...")
+        fund_type_names = "、".join(fund_types)
+        if include_small_fund:
+            fund_type_names += "、小微盘"
+        print(f"开始并行处理 {len(fund_types)} 种指数基金{'和小微盘基金' if include_small_fund else ''}: {fund_type_names}...")
         
         def process_fund_type(fund_type):
             """处理单个基金类型的函数"""
             return fund_type, fetch_fund_data(fund_type)
         
-        with ThreadPoolExecutor(max_workers=len(fund_types) + 1) as executor:
+        with ThreadPoolExecutor(max_workers=len(fund_types) + (1 if include_small_fund else 0)) as executor:
             # 提交所有指数基金任务
             futures = {executor.submit(process_fund_type, ft): ft for ft in fund_types}
-            # 提交小微盘基金任务
-            small_future = executor.submit(fetch_small_fund_data)
+            # 根据配置决定是否提交小微盘基金任务
+            small_future = None
+            if include_small_fund:
+                small_future = executor.submit(fetch_small_fund_data)
             
             # 处理指数基金结果
             for future in as_completed(futures):
@@ -583,14 +907,15 @@ def update_fund_data():
                     print(f"处理{fund_type}基金时出错: {e}")
             
             # 处理小微盘基金结果
-            try:
-                small_fund_df = small_future.result()
-                if small_fund_df is not None and not small_fund_df.empty:
-                    temp_data['小微盘'] = small_fund_df
-                    all_fund_codes.extend(small_fund_df['基金代码'].tolist())
-                    has_data = True
-            except Exception as e:
-                print(f"处理小微盘基金时出错: {e}")
+            if include_small_fund and small_future is not None:
+                try:
+                    small_fund_df = small_future.result()
+                    if small_fund_df is not None and not small_fund_df.empty:
+                        temp_data['小微盘'] = small_fund_df
+                        all_fund_codes.extend(small_fund_df['基金代码'].tolist())
+                        has_data = True
+                except Exception as e:
+                    print(f"处理小微盘基金时出错: {e}")
         
         # 收集所有需要市值评分的基金代码
         if all_fund_codes:
@@ -640,7 +965,7 @@ def update_fund_data():
         if has_data:
             # 计算超额收益率并保存到新的工作表
             with pd.ExcelWriter(filename, engine='openpyxl', mode='a') as writer:
-                calculate_excess_returns(writer)
+                calculate_excess_returns(writer, selected_fund_types=SELECTED_FUND_TYPES)
             
             # 调整列宽
             try:
@@ -648,7 +973,7 @@ def update_fund_data():
             except Exception as e:
                 print(f"调整列宽时出错: {e}")
             
-            print(f"已将所有C份额基金的排序结果保存为'{filename}'，每个时间段的前10名标黄，至少有4个时间段进入前10的基金其简称标金黄色。")
+            print(f"已将所有C份额基金的排序结果保存为'{filename}'。")
         else:
             print("没有获取到任何基金数据")
         
