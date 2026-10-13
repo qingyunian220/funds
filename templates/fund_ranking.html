@@ -142,6 +142,54 @@
       border-radius: 4px;
       text-align: center;
     }
+
+    /* 超额收益曲线时间筛选条 */
+    .curve-filter-bar {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 4px 16px;
+      margin: 4px 0 10px;
+      font-size: 13px;
+      text-align: left;
+    }
+    .curve-filter-bar .cf-item {
+      cursor: pointer;
+      color: #333;
+      padding: 2px 2px;
+      border-bottom: 2px solid transparent;
+      white-space: nowrap;
+    }
+    .curve-filter-bar .cf-item:hover { color: #ff5722; }
+    .curve-filter-bar .cf-item.active {
+      color: #ff5722;
+      font-weight: 600;
+      border-bottom-color: #ff5722;
+    }
+    .curve-filter-bar .cf-range {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      margin-left: auto;
+      color: #666;
+    }
+    .curve-filter-bar .cf-range input[type="date"] {
+      padding: 2px 6px;
+      border: 1px solid #d2d2d2;
+      border-radius: 3px;
+      font-size: 12px;
+      color: #333;
+    }
+    .curve-filter-bar .cf-apply {
+      padding: 2px 12px;
+      border: 1px solid #d2d2d2;
+      border-radius: 3px;
+      background: #fff;
+      cursor: pointer;
+      font-size: 12px;
+      color: #333;
+    }
+    .curve-filter-bar .cf-apply:hover { color: #ff5722; border-color: #ff5722; }
   </style>
 </head>
 <body>
@@ -195,7 +243,8 @@
       { id: 'zz1000',      name: '中证1000基金', benchmark: '华泰柏瑞中证1000ETF(516300)',  sheet: '中证1000基金_超额',chartType: '中证1000' },
       { id: 'zz2000',      name: '中证2000基金', benchmark: '华泰柏瑞中证2000ETF(563300)',  sheet: '中证2000基金_超额',chartType: '中证2000' },
       { id: 'gz2000',      name: '国证2000基金', benchmark: '广发国证2000ETF(159907)',      sheet: '国证2000基金_超额',chartType: '国证2000' },
-      { id: 'small_fund',  name: '小微盘基金',   benchmark: '诺安多策略混合(320016)',       sheet: '小微盘_超额',      chartType: '小微盘' }
+      { id: 'small_fund',  name: '小微盘基金',   benchmark: '诺安多策略混合(320016)',       sheet: '小微盘_超额',      chartType: '小微盘' },
+      { id: 'large_fund',  name: '大盘主动基金', benchmark: '前海开源优势蓝筹股票C(001638)', sheet: '大盘主动_超额',   chartType: '大盘主动' }
     ];
 
     // 只保留 SELECTED_FUND_TYPES 中包含的类型
@@ -210,7 +259,18 @@
         + '<fieldset class="layui-elem-field" style="margin-top: 25px;">'
         +   '<legend>' + config.name + '</legend>'
         +   '<div class="layui-field-box">'
-        +     '<div class="chart-container" id="chart_' + config.id + '"><div class="echarts-chart" id="echart_' + config.id + '"></div></div>'
+        +     '<div class="chart-container" id="chart_' + config.id + '">'
+        +       '<div class="curve-filter-bar" id="cfbar_' + config.id + '" data-chart="' + config.id + '">'
+        +         '<a class="cf-item" data-period="1m">近一月</a>'
+        +         '<a class="cf-item" data-period="3m">近三月</a>'
+        +         '<a class="cf-item" data-period="6m">近半年</a>'
+        +         '<a class="cf-item" data-period="1y">近一年</a>'
+        +         '<a class="cf-item" data-period="ytd">今年来</a>'
+        +         '<a class="cf-item active" data-period="2y">近两年</a>'
+        +         '<span class="cf-range">起止：<input type="date" class="cf-start"> ~ <input type="date" class="cf-end"><button type="button" class="cf-apply">确定</button></span>'
+        +       '</div>'
+        +       '<div class="echarts-chart" id="echart_' + config.id + '"></div>'
+        +     '</div>'
         +     '<div class="table-scroll-container">'
         +       '<table class="layui-table" id="' + config.id + 'Table" lay-filter="' + config.id + 'Table"></table>'
         +     '</div>'
@@ -219,9 +279,9 @@
     });
     document.getElementById('fundSections').innerHTML = sectionsHtml;
 
-    // 创建表格列定义
-    function createTableColumns() {
-      return [[
+    // 创建表格列定义（config 用于按基金类型追加专属列）
+    function createTableColumns(config) {
+      var cols = [[
         {field: '基金代码', title: '基金代码', width: 86, align: 'center'},
         {field: '基金简称', title: '基金简称', width: 233, align: 'center'},
         {field: '近1周超额', title: '近1周超额', width: 94, align: 'center', templet: function(d) {
@@ -264,14 +324,14 @@
           else if (parseFloat(value) > 0) return '<span class="positive-number">' + formattedValue + '</span>';
           return formattedValue;
         }},
-        // {field: '近2年超额', title: '近2年超额', width: 94,  align: 'center', templet: function(d) {
-        //   var value = d['近2年超额'];
-        //   if (value === null || value === undefined || value === '') return '';
-        //   var formattedValue = parseFloat(value).toFixed(2) + '%';
-        //   if (parseFloat(value) < 0) return '<span class="negative-number">' + formattedValue + '</span>';
-        //   else if (parseFloat(value) > 0) return '<span class="positive-number">' + formattedValue + '</span>';
-        //   return formattedValue;
-        // }},
+        {field: '近2年超额', title: '近2年超额', width: 94,  align: 'center', templet: function(d) {
+          var value = d['近2年超额'];
+          if (value === null || value === undefined || value === '') return '';
+          var formattedValue = parseFloat(value).toFixed(2) + '%';
+          if (parseFloat(value) < 0) return '<span class="negative-number">' + formattedValue + '</span>';
+          else if (parseFloat(value) > 0) return '<span class="positive-number">' + formattedValue + '</span>';
+          return formattedValue;
+        }},
         // {field: '近3年超额', title: '近3年超额', width: 94, align: 'center', templet: function(d) {
         //   var value = d['近3年超额'];
         //   if (value === null || value === undefined || value === '') return '';
@@ -300,6 +360,66 @@
           return value;
         }}
       ]];
+      // 大盘主动基金追加稳定性评分列
+      if (config && config.chartType === '大盘主动') {
+        cols[0].push({field: '稳定性评分', title: '稳定性评分', width: 100, align: 'center'});
+      }
+      return cols;
+    }
+
+    // ===== 曲线时间筛选：辅助函数与状态 =====
+    var chartStore = {};  // id -> { data, config }，保存全量曲线数据供筛选重渲染
+
+    function fmtDate(d) {
+      var m = d.getMonth() + 1, day = d.getDate();
+      return d.getFullYear() + '-' + (m < 10 ? '0' : '') + m + '-' + (day < 10 ? '0' : '') + day;
+    }
+    function subMonths(dateStr, n) {
+      var d = new Date(dateStr); var day = d.getDate();
+      d.setMonth(d.getMonth() - n);
+      if (d.getDate() < day) d.setDate(0);   // 月末钳制
+      return d;
+    }
+    function subYears(dateStr, n) {
+      var d = new Date(dateStr); var day = d.getDate();
+      d.setFullYear(d.getFullYear() - n);
+      if (d.getDate() < day) d.setDate(0);
+      return d;
+    }
+    function getLastDate(data) {
+      var maxD = '';
+      data.series.forEach(function(s) {
+        if (s.dates && s.dates.length && s.dates[s.dates.length - 1] > maxD) maxD = s.dates[s.dates.length - 1];
+      });
+      return maxD;
+    }
+    // 周期 -> 时间窗 [start, end]，相对数据最后日期
+    function computeWindow(period, lastDate) {
+      var end = lastDate, start;
+      if (period === 'ytd') { start = (new Date(lastDate)).getFullYear() + '-01-01'; }
+      else if (period === '1m') { start = fmtDate(subMonths(end, 1)); }
+      else if (period === '3m') { start = fmtDate(subMonths(end, 3)); }
+      else if (period === '6m') { start = fmtDate(subMonths(end, 6)); }
+      else if (period === '1y') { start = fmtDate(subYears(end, 1)); }
+      else { start = fmtDate(subYears(end, 2)); }  // 2y
+      return { start: start, end: end };
+    }
+    // 按窗口过滤数据点
+    function windowPoints(s, win) {
+      var pts = [];
+      for (var j = 0; j < s.dates.length; j++) {
+        var d = s.dates[j];
+        if (!win || (d >= win.start && d <= win.end)) pts.push([d, s.data[j]]);
+      }
+      return pts;
+    }
+    // 归零重算：几何口径，以窗口内首点为0，与表格"近X超额"一致
+    function rebase(pts) {
+      if (!pts.length) return pts;
+      var base = pts[0][1];
+      return pts.map(function(p) {
+        return [p[0], ((1 + p[1] / 100) / (1 + base / 100) - 1) * 100];
+      });
     }
 
     // 加载超额收益曲线图和表格（使用ECharts渲染，表格基金与走势图一致）
@@ -323,12 +443,20 @@
               elem: '#' + config.id + 'Table',
               data: [],
               page: false,
-              cols: createTableColumns(),
-              text: '暂无数据'
+              cols: createTableColumns(config),
+              text: {none: '暂无数据'}
             });
             return;
           }
-          renderEchartsChart(chartDom, res.data, config);
+          chartStore[config.id] = { data: res.data, config: config };
+          var lastD = getLastDate(res.data);
+          var defWin = computeWindow('2y', lastD);   // 默认近两年
+          var cfbar = document.getElementById('cfbar_' + config.id);
+          if (cfbar) {
+            cfbar.querySelector('.cf-start').value = defWin.start;
+            cfbar.querySelector('.cf-end').value = defWin.end;
+          }
+          renderEchartsChart(chartDom, res.data, config, defWin, '近两年');
 
           // 用走势图中的基金名称，从Excel全量数据中筛选对应的基金填充表格
           var chartFundNames = res.data.series.map(function(s) { return s.name; });
@@ -340,8 +468,8 @@
                   elem: '#' + config.id + 'Table',
                   data: [],
                   page: false,
-                  cols: createTableColumns(),
-                  text: '暂无数据'
+                  cols: createTableColumns(config),
+                  text: {none: '暂无数据'}
                 });
                 return;
               }
@@ -356,7 +484,8 @@
                 elem: '#' + config.id + 'Table',
                 data: filteredData,
                 page: false,
-                cols: createTableColumns(),
+                cols: createTableColumns(config),
+                text: {none: '暂无数据'},
                 done: function() {
                   console.log(config.name + '表格渲染完成，共 ' + filteredData.length + ' 只基金');
                 }
@@ -371,21 +500,23 @@
         });
     });
 
-    // ECharts渲染函数（使用时间轴，支持不同基金不同日期范围）
-    function renderEchartsChart(dom, data, config) {
-      var myChart = echarts.init(dom);
+    // ECharts渲染函数（使用时间轴，支持不同基金不同日期范围；win 为时间窗，归零重算）
+    function renderEchartsChart(dom, data, config, win, label) {
+      var myChart = echarts.getInstanceByDom(dom);
+      if (!myChart) {
+        myChart = echarts.init(dom);
+        window.echartsInstances.push(myChart);
+        window.addEventListener('resize', function() { myChart.resize(); });
+      }
       var colors = ['#5470c6', '#91cc75', '#ee6666', '#fac858', '#73c0de', '#3ba272', '#fc8452', '#9a60b4'];
 
-      // 每只基金用 [日期, 数值] 格式，支持各自不同的日期范围
+      // 每只基金：按窗口过滤数据点 + 归零重算，用 [日期, 数值] 格式
       var series = data.series.map(function(s, i) {
-        var points = [];
-        for (var j = 0; j < s.dates.length; j++) {
-          points.push([s.dates[j], s.data[j]]);
-        }
+        var pts = rebase(windowPoints(s, win));
         return {
           name: s.name,
           type: 'line',
-          data: points,
+          data: pts,
           smooth: true,
           symbol: 'none',
           lineStyle: { width: 2 },
@@ -393,30 +524,32 @@
         };
       });
 
-      // 收集所有基金的日期，取并集用于基准线
+      // 收集窗口内所有基金的日期，取并集用于基准线
       var allDates = [];
-      data.series.forEach(function(s) {
-        s.dates.forEach(function(d) {
-          if (allDates.indexOf(d) === -1) allDates.push(d);
+      series.forEach(function(sr) {
+        sr.data.forEach(function(p) {
+          if (allDates.indexOf(p[0]) === -1) allDates.push(p[0]);
         });
       });
       allDates.sort();
-      var benchmarkPoints = allDates.map(function(d) { return [d, 0]; });
 
       // 基准线（Y=0，贯穿整个时间轴）
       series.push({
         name: data.benchmark,
         type: 'line',
-        data: benchmarkPoints,
+        data: allDates.map(function(d) { return [d, 0]; }),
         symbol: 'none',
         lineStyle: { color: '#333', width: 1.5, type: 'dashed' },
         z: 10
       });
 
+      // 副标题：基准 + 当前周期/区间
+      var rangeText = (win ? win.start + ' ~ ' + win.end : (data.start_date || '') + ' ~ ' + (data.end_date || ''));
+
       var option = {
         title: {
           text: config.name + '超额收益曲线',
-          subtext: '基准：' + data.benchmark,
+          subtext: '基准：' + data.benchmark + ' · ' + label + '（' + rangeText + '）',
           left: 'center',
           textStyle: { fontSize: 14 }
         },
@@ -455,10 +588,47 @@
         series: series
       };
 
-      myChart.setOption(option);
-      window.echartsInstances.push(myChart);
-      window.addEventListener('resize', function() { myChart.resize(); });
+      myChart.setOption(option, true);
     }
+
+    // ===== 时间筛选条交互（事件委托，每个图表独立） =====
+    document.getElementById('fundSections').addEventListener('click', function(e) {
+      var t = e.target;
+      if (!t || !t.closest) return;
+
+      // 快捷周期按钮
+      var item = t.closest('.cf-item');
+      if (item) {
+        var bar = item.closest('.curve-filter-bar');
+        var id = bar.getAttribute('data-chart');
+        var items = bar.querySelectorAll('.cf-item');
+        for (var k = 0; k < items.length; k++) items[k].classList.remove('active');
+        item.classList.add('active');
+        var st = chartStore[id];
+        if (st) {
+          var win = computeWindow(item.getAttribute('data-period'), getLastDate(st.data));
+          renderEchartsChart(document.getElementById('echart_' + id), st.data, st.config, win, item.textContent.trim());
+        }
+        return;
+      }
+
+      // 自定义日期范围
+      var apply = t.closest('.cf-apply');
+      if (apply) {
+        var bar2 = apply.closest('.curve-filter-bar');
+        var id2 = bar2.getAttribute('data-chart');
+        var start = bar2.querySelector('.cf-start').value;
+        var end = bar2.querySelector('.cf-end').value;
+        if (!start || !end) { alert('请选择起止日期'); return; }
+        if (start > end) { var tmp = start; start = end; end = tmp; }
+        var items2 = bar2.querySelectorAll('.cf-item');
+        for (var k2 = 0; k2 < items2.length; k2++) items2[k2].classList.remove('active');
+        var st2 = chartStore[id2];
+        if (st2) {
+          renderEchartsChart(document.getElementById('echart_' + id2), st2.data, st2.config, { start: start, end: end }, '自定义');
+        }
+      }
+    });
   });
   </script>
 </body>

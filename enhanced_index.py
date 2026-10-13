@@ -1,4 +1,7 @@
 import re
+import os
+import calendar
+from datetime import date, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pandas as pd
@@ -30,10 +33,104 @@ import matplotlib.pyplot as plt
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'Arial Unicode MS']
 plt.rcParams['axes.unicode_minus'] = False
 
-from analyze_funds import get_fund_nav_history, calculate_excess_return_curve
+from analyze_funds import get_fund_nav_history, calculate_excess_return_curve, calculate_stability_score
 
 # 当前选中的基金类型（由 update_fund_data 设置，供 app.py 读取控制页面显示）
-SELECTED_FUND_TYPES = ["A500", "中证500", "中证1000", "国证2000"]
+SELECTED_FUND_TYPES = ["沪深300", "A500", "中证500", "中证1000", "国证2000", "小微盘", "大盘主动"]
+
+# 市值评分筛选类基金配置：基金类型 -> (市值评分阈值, 比较方向 'lt' 评分<阈值 / 'gt' 评分>阈值)
+SPECIAL_MARKET_CAP_FILTERS = {
+    "小微盘": (25, 'lt'),
+    "大盘主动": (90, 'gt'),
+}
+# 市值评分筛选类基金对应的超额收益基准基金代码
+SPECIAL_FUND_BENCHMARKS = {
+    "小微盘": "320016",
+    "大盘主动": "001638",
+}
+# 市值评分筛选类基金的最新规模上限（亿元）：达到上限的基金剔除，无规模数据的保留，未配置的类型不筛选规模
+SPECIAL_FUND_MAX_SCALE = {
+    "大盘主动": 10,
+}
+# 市值评分筛选类基金的附加筛选条件：min_stability_score 为超额收益曲线稳定性评分下限(0-100，参考 analyze_funds.py)，
+# max_top10_ratio 为前10大重仓股占比上限(%)，max_industry_concentration 为持股行业集中度上限(%)；未配置的类型不生效
+# skip_top_period_filter 为 True 时跳过"各时间段前10"筛选（保留全部候选），如大盘主动
+SPECIAL_FUND_EXTRA_FILTERS = {
+    "大盘主动": {
+        "min_stability_score": 50,
+        "max_top10_ratio": 80,
+        "max_industry_concentration": 80,
+        "skip_top_period_filter": True,
+    },
+}
+
+# 业绩筛选参与的时间段选项（"近2年" = 当前系统日期往前完整24个自然月；
+# 排序按时间跨度由短到长，"今年来"为年度特殊项收尾）
+SCREEN_PERIOD_COLUMNS = ['近1月', '近3月', '近6月', '近1年', '近2年', '今年来']
+
+# 指数类基金（沪深300、A500、中证500、中证1000、国证2000等）前10大重仓股占比上限(%)：
+# 占比超过该值的基金剔除，数据缺失的保留（与既有规模/占比筛选口径一致）
+INDEX_FUND_MAX_TOP10_RATIO = 50
+
+
+def get_recent_two_year_window(reference=None):
+    """返回(起始日, 截止日)：从当前系统日期（或指定日期）往前推算完整的24个自然月。
+
+    起始日的"日"按目标月月末钳制，例如基准日为 2024-02-29 时起始日为 2022-02-28，
+    保证得到的是完整的24个月区间而非简单的730天。
+
+    参数
+    ----------
+    reference : datetime.date, optional
+        基准截止日，默认取 date.today()
+
+    返回
+    -------
+    tuple[date, date]
+        (起始日, 截止日)
+    """
+    end = reference or date.today()
+    start_year, start_month = end.year - 2, end.month
+    start_day = min(end.day, calendar.monthrange(start_year, start_month)[1])
+    return date(start_year, start_month, start_day), end
+
+
+def select_top_indices_by_periods(fund_df, period_columns=None, top_n=10):
+    """在任一时间段收益进入前 top_n 的基金索引集合（各时间段取并集）。
+
+    - 空值/非数值（如运作不满24个月基金的"近2年"）会被自动跳过，
+      即"近2年"通道只会纳入时间字段（成立时间）落在近2年区间内的基金；
+    - 仅对 object 类型列做数值转换，数值型列保持原行为，确保与既有逻辑一致。
+
+    参数
+    ----------
+    fund_df : pd.DataFrame
+        基金排名数据
+    period_columns : list[str], optional
+        参与筛选的时间段列，默认使用 SCREEN_PERIOD_COLUMNS（含"近2年"）
+    top_n : int
+        每个时间段保留的前 N 名，默认10
+
+    返回
+    -------
+    set
+        命中任一时间段前 N 名的行索引集合
+    """
+    columns = period_columns if period_columns is not None else SCREEN_PERIOD_COLUMNS
+    if '近2年' in columns:
+        window_start, window_end = get_recent_two_year_window()
+        print(f"时间段筛选：'近2年'按当前系统日期前推完整24个月动态匹配，"
+              f"区间 {window_start.strftime('%Y-%m-%d')} ~ {window_end.strftime('%Y-%m-%d')}")
+
+    top_indices = set()
+    for col in columns:
+        if col in fund_df.columns:
+            series = fund_df[col]
+            if series.dtype == object:
+                series = pd.to_numeric(series, errors='coerce')
+            top_indices.update(series.nlargest(top_n).index)
+    return top_indices
+
 
 # # Flask应用配置
 # app = Flask(__name__)
@@ -137,13 +234,8 @@ def fetch_fund_data(fund_type):
         for keyword in exclude_keywords:
             fund_df = fund_df[~fund_df["基金简称"].str.contains(keyword, na=False)].copy()
 
-        # 筛选出在各时间段任意一个进入前10的基金
-        return_columns = ['近1月', '近3月', '近6月', '近1年', '今年来']
-        top_indices = set()
-        for col in return_columns:
-            if col in fund_df.columns:
-                top_10_idx = fund_df[col].nlargest(10).index
-                top_indices.update(top_10_idx)
+        # 筛选出在各时间段任意一个进入前10的基金（含"近2年"，完整24个月动态窗口）
+        top_indices = select_top_indices_by_periods(fund_df)
 
         fund_df = fund_df.loc[list(top_indices)].copy()
         print(f"{fund_type}基金: 从全部基金中筛选出 {len(fund_df)} 只各时间段前10基金")
@@ -207,21 +299,43 @@ def fetch_fund_data(fund_type):
             except Exception as e:
                 print(f"基金代码{code}查询失败: {e}")
 
+        # 前10大重仓股占比筛选：占比超过上限的基金剔除（数据缺失的保留，与既有筛选口径一致）
+        def _extract_pct(value):
+            m = re.search(r'([\d.]+)\s*%', str(value))
+            return float(m.group(1)) if m else None
+
+        before_count = len(fund_df)
+        top10_pct = fund_df["前10大重仓股占比"].apply(_extract_pct)
+        fund_df = fund_df[top10_pct.isna() | (top10_pct <= INDEX_FUND_MAX_TOP10_RATIO)].copy()
+        removed = before_count - len(fund_df)
+        print(f"{fund_type}基金: 按前10大重仓股占比不超过{INDEX_FUND_MAX_TOP10_RATIO}%筛选，"
+              f"剔除 {removed} 只，保留 {len(fund_df)} 只")
+
         return fund_df.sort_values(by='近6月', ascending=False)
     except Exception as e:
         print(f"获取{fund_type}基金数据时出错: {e}")
         return pd.DataFrame()
 
-def fetch_small_fund_data():
-    """获取小微盘基金数据（只保留各时间段前10名的基金）"""
+def fetch_market_cap_fund_data(fund_type="小微盘", market_cap_threshold=25, market_cap_mode='lt', max_scale_yi=None, extra_filters=None):
+    """按市值评分筛选基金数据（只保留各时间段前10名的基金）
+
+    fund_type: 基金类型名称，如 '小微盘'、'大盘主动'
+    market_cap_threshold: 市值评分阈值
+    market_cap_mode: 'lt' 筛选市值评分 < 阈值，'gt' 筛选市值评分 > 阈值
+    max_scale_yi: 最新规模上限（亿元），达到上限的基金剔除，None 表示不筛选规模
+    extra_filters: 附加筛选条件字典，可含 min_excess_months（要求超额收益>0的时间段列表）、
+                   max_top10_ratio（前10大重仓股占比上限%）、max_industry_concentration（持股行业集中度上限%）、
+                   skip_top_period_filter（True 表示跳过"各时间段前10"筛选，保留全部候选）
+    """
+    compare_symbol = '>' if market_cap_mode == 'gt' else '<'
     try:
-        # 从 jiuquaner_fund_style.py 获取市值评分 < 25 的基金代码
-        print('正在从韭圈儿获取市值评分 < 25 的基金...')
+        # 从 jiuquaner_fund_style.py 获取符合市值评分条件的基金代码
+        print(f'正在从韭圈儿获取市值评分 {compare_symbol} {market_cap_threshold} 的基金...')
         fund_list_df = get_fund_list(filter_types=['股票', '混合', '指数'])
         
         # 提前过滤债券和定开基金
         if 'name' in fund_list_df.columns:
-            mask = ~fund_list_df['name'].str.contains('债券|定开|货币|人民币|美元|300|500|定期|纯债|A50|持有|黄金|A', na=False)
+            mask = ~fund_list_df['name'].str.contains('债券|定开|货币|人民币|美元|300|500|定期|纯债|A50|持有|黄金|A|H|R|ETF|指数|医药|医疗', na=False)
             fund_list_df = fund_list_df[mask].copy()
         
         fund_codes = fund_list_df['code'].tolist()
@@ -232,34 +346,76 @@ def fetch_small_fund_data():
             fund_name_map = dict(zip(fund_list_df['code'], fund_list_df['name']))
         
         # 批量获取基金风格数据
-        result_df, filtered_df = batch_get_style(fund_codes, fund_name_map=fund_name_map, max_workers=20, filter_market_cap_threshold=25)
+        result_df, filtered_df = batch_get_style(fund_codes, fund_name_map=fund_name_map, max_workers=20, filter_market_cap_threshold=market_cap_threshold, filter_market_cap_mode=market_cap_mode)
         
         if filtered_df is not None and not filtered_df.empty:
-            small_funds_df = pd.DataFrame({'code': filtered_df['基金代码'].tolist()})
-            print(f'从韭圈儿获取到 {len(small_funds_df)} 只市值评分 < 25 的基金')
+            matched_funds_df = pd.DataFrame({'code': filtered_df['基金代码'].tolist()})
+            print(f'从韭圈儿获取到 {len(matched_funds_df)} 只市值评分 {compare_symbol} {market_cap_threshold} 的基金')
         else:
             print('未获取到符合条件的基金，使用全部获取到的基金')
             if not result_df.empty:
-                small_funds_df = pd.DataFrame({'code': result_df['基金代码'].tolist()})
+                matched_funds_df = pd.DataFrame({'code': result_df['基金代码'].tolist()})
             else:
-                small_funds_df = pd.DataFrame({'code': []})
+                matched_funds_df = pd.DataFrame({'code': []})
 
         # 获取所有基金基础信息
         fund_open_fund_rank_em_df = ak.fund_open_fund_rank_em(symbol="全部")
 
         # 筛选出符合条件的基金
-        fund_df = fund_open_fund_rank_em_df[fund_open_fund_rank_em_df["基金代码"].isin(small_funds_df["code"])].copy()
+        fund_df = fund_open_fund_rank_em_df[fund_open_fund_rank_em_df["基金代码"].isin(matched_funds_df["code"])].copy()
 
-        # 筛选出在各时间段任意一个进入前10的基金
-        return_columns = ['近1月', '近3月', '近6月', '近1年', '今年来']
-        top_indices = set()
-        for col in return_columns:
-            if col in fund_df.columns:
-                top_10_idx = fund_df[col].nlargest(10).index
-                top_indices.update(top_10_idx)
+        # 筛选出在各时间段任意一个进入前10的基金（含"近2年"，完整24个月动态窗口）
+        # skip_top_period_filter=True 的类型（如大盘主动）不按各时间段前10筛选，保留全部候选
+        if (extra_filters or {}).get("skip_top_period_filter"):
+            print(f"{fund_type}基金: 不按各时间段前10筛选，保留全部 {len(fund_df)} 只候选基金")
+        else:
+            top_indices = select_top_indices_by_periods(fund_df)
+            fund_df = fund_df.loc[list(top_indices)].copy()
+            print(f"{fund_type}基金: 从全部基金中筛选出 {len(fund_df)} 只各时间段前10基金")
 
-        fund_df = fund_df.loc[list(top_indices)].copy()
-        print(f"小微盘基金: 从全部基金中筛选出 {len(fund_df)} 只各时间段前10基金")
+        # 附加筛选：超额收益曲线稳定性评分（参考 analyze_funds.py，基准为该类型配置的基准基金；评分无效的剔除）
+        min_stability = (extra_filters or {}).get("min_stability_score")
+        if min_stability is not None:
+            benchmark_code = SPECIAL_FUND_BENCHMARKS.get(fund_type)
+            benchmark_df = None
+            if benchmark_code:
+                print(f"{fund_type}基金: 正在获取基准基金 {benchmark_code} 净值用于稳定性评分...")
+                for attempt in range(3):
+                    benchmark_nav_df = get_fund_nav_history(benchmark_code, 365)
+                    if benchmark_nav_df is not None and not benchmark_nav_df.empty:
+                        break
+                    print(f"获取基准基金 {benchmark_code} 净值失败(第{attempt+1}次)，2秒后重试...")
+                    time.sleep(2)
+                if benchmark_nav_df is not None and not benchmark_nav_df.empty:
+                    # calculate_excess_return_curve 要求基准数据框含"指数"列
+                    benchmark_df = benchmark_nav_df.rename(columns={'累计净值': '指数'})
+
+            if benchmark_df is not None and not benchmark_df.empty:
+                def fetch_stability_score(code):
+                    try:
+                        fund_nav_df = get_fund_nav_history(code, 365)
+                        if fund_nav_df is None or fund_nav_df.empty:
+                            return code, None
+                        curve_data = calculate_excess_return_curve(fund_nav_df, benchmark_df)
+                        if curve_data is None or len(curve_data) < 2:
+                            return code, None
+                        return code, calculate_stability_score(curve_data)
+                    except Exception:
+                        return code, None
+
+                score_map = {}
+                with ThreadPoolExecutor(max_workers=10) as score_executor:
+                    score_futures = [score_executor.submit(fetch_stability_score, str(code)) for code in fund_df["基金代码"]]
+                    for future in as_completed(score_futures):
+                        code, score = future.result()
+                        score_map[code] = score
+
+                before_count = len(fund_df)
+                fund_df["稳定性评分"] = fund_df["基金代码"].astype(str).map(score_map)
+                fund_df = fund_df[fund_df["稳定性评分"].notna() & (fund_df["稳定性评分"] >= min_stability)].copy()
+                print(f"{fund_type}基金: 按超额曲线稳定性评分 >= {min_stability} 筛选，从 {before_count} 只保留 {len(fund_df)} 只")
+            else:
+                print(f"{fund_type}基金: 未获取到基准基金({benchmark_code})净值，跳过稳定性评分筛选")
 
         if fund_df.empty:
             return pd.DataFrame()
@@ -270,59 +426,100 @@ def fetch_small_fund_data():
         fund_df.loc[:, "前10大重仓股占比"] = ""
         fund_df.loc[:, "持股行业集中度"] = ""
 
-        for idx, row in tqdm(fund_df.iterrows(), total=fund_df.shape[0], desc="获取小微盘基金详情"):
-            code = row["基金代码"]
-            # 1. 根据基金代码查找基金名称 - 即使失败也继续
-            fund_name = get_fund_name_by_code(str(code))
-            if not fund_name:
-                print(f"无法获取基金 {code} 的名称，跳过该基金")
-                continue
-            base_name = fund_name
-            if fund_name.endswith('A') or fund_name.endswith('C'):
-                base_name = fund_name[:-1]
-            # 2. 根据基金名称查找对应的基金代码(A+C)
-            code_names = fetch_and_parse_fund_search(base_name)
-            # 3. 获取A类和C类基金的规模数据
-            if isinstance(code_names, list) and len(code_names) > 0:
-                for code_name in code_names:
-                    info = get_fund_info(code_name['code'])
-
-                # 解析并累加规模数据
-                scale_match = re.search(r'([\d.]+)亿元', info['最新规模'])
-                if scale_match:
-                    scale_value = float(scale_match.group(1))
-                    # 如果当前值是空字符串，则初始化为0
-                    current_scale = fund_df.loc[idx, "最新规模"]
-                    if current_scale == "":
-                        current_scale = 0
-                    else:
-                        # 提取当前值中的数字部分
-                        current_match = re.search(r'([\d.]+)亿元', str(current_scale))
-                        if current_match:
-                            current_scale = float(current_match.group(1))
-                        else:
-                            current_scale = 0
-                    # 累加规模值
-                    new_scale = current_scale + scale_value
-                    fund_df.loc[idx, "最新规模"] = f"{new_scale:.2f}亿元"
+        def fetch_detail(code):
+            """采集单只基金详情（供多线程调用）：规模/成立时间/换手率/前10大重仓/行业集中度。
+            结果以字典返回，避免多线程并发写 DataFrame。"""
+            result = {'最新规模': '', '成立时间': '', '换手率': '', '前10大重仓股占比': '', '持股行业集中度': ''}
             try:
+                # 1. 根据基金代码查找基金名称 - 即使失败也继续
+                fund_name = get_fund_name_by_code(str(code))
+                if not fund_name:
+                    print(f"无法获取基金 {code} 的名称，跳过该基金")
+                    return result
+                base_name = fund_name
+                if fund_name.endswith('A') or fund_name.endswith('C'):
+                    base_name = fund_name[:-1]
+                # 2. 根据基金名称查找对应的基金代码(A+C)
+                code_names = fetch_and_parse_fund_search(base_name)
+                # 3. 获取A类和C类基金的规模数据
+                if isinstance(code_names, list) and len(code_names) > 0:
+                    for code_name in code_names:
+                        info = get_fund_info(code_name['code'])
+                    # 解析并累加规模数据
+                    scale_match = re.search(r'([\d.]+)亿元', info['最新规模'])
+                    if scale_match:
+                        result['最新规模'] = f"{float(scale_match.group(1)):.2f}亿元"
                 info = get_fund_info(code)
-                fund_df.loc[idx, "成立时间"] = info['成立时间']
+                result['成立时间'] = info.get('成立时间', '')
                 # 获取换手率和重仓股信息
                 fund_detail = parse_fund_data(code)
                 if fund_detail:
-                    if '换手率' in fund_detail:
-                        fund_df.loc[idx, "换手率"] = fund_detail['换手率']
-                    if '前10大重仓股占比' in fund_detail:
-                        fund_df.loc[idx, "前10大重仓股占比"] = fund_detail['前10大重仓股占比']
-                    if '持股行业集中度' in fund_detail:
-                        fund_df.loc[idx, "持股行业集中度"] = fund_detail['持股行业集中度']
+                    result['换手率'] = fund_detail.get('换手率', '')
+                    result['前10大重仓股占比'] = fund_detail.get('前10大重仓股占比', '')
+                    result['持股行业集中度'] = fund_detail.get('持股行业集中度', '')
             except Exception as e:
                 print(f"基金代码{code}查询失败: {e}")
+            return result
 
+        # 多线程采集各基金详情（如大盘主动候选达数百只，串行逐只抓取非常慢）
+        detail_map = {}
+        with ThreadPoolExecutor(max_workers=20) as detail_executor:
+            futures = {detail_executor.submit(fetch_detail, str(row["基金代码"])): idx
+                       for idx, row in fund_df.iterrows()}
+            for future in tqdm(as_completed(futures), total=len(futures), desc=f"获取{fund_type}基金详情"):
+                idx = futures[future]
+                try:
+                    detail_map[idx] = future.result()
+                except Exception as e:
+                    print(f"基金详情采集失败: {e}")
+        # 回填采集结果
+        for idx, d in detail_map.items():
+            fund_df.loc[idx, "最新规模"] = d['最新规模']
+            fund_df.loc[idx, "成立时间"] = d['成立时间']
+            fund_df.loc[idx, "换手率"] = d['换手率']
+            fund_df.loc[idx, "前10大重仓股占比"] = d['前10大重仓股占比']
+            fund_df.loc[idx, "持股行业集中度"] = d['持股行业集中度']
+
+        # 按最新规模筛选：剔除规模达到上限的基金（无规模数据的保留）
+        if max_scale_yi is not None:
+            def extract_scale_yi(value):
+                match = re.search(r'([\d.]+)亿元', str(value))
+                return float(match.group(1)) if match else None
+
+            before_count = len(fund_df)
+            scale_yi = fund_df["最新规模"].apply(extract_scale_yi)
+            fund_df = fund_df[scale_yi.isna() | (scale_yi < max_scale_yi)].copy()
+            print(f"{fund_type}基金: 按最新规模 < {max_scale_yi}亿元筛选，从 {before_count} 只保留 {len(fund_df)} 只")
+
+        # 附加筛选：前10大重仓股占比、持股行业集中度上限（数据缺失的保留）
+        extra = extra_filters or {}
+        max_top10 = extra.get("max_top10_ratio")
+        max_industry = extra.get("max_industry_concentration")
+        if max_top10 is not None or max_industry is not None:
+            def extract_percent(value):
+                match = re.search(r'([\d.]+)\s*%', str(value))
+                return float(match.group(1)) if match else None
+
+            before_count = len(fund_df)
+            if max_top10 is not None and "前10大重仓股占比" in fund_df.columns:
+                top10_pct = fund_df["前10大重仓股占比"].apply(extract_percent)
+                fund_df = fund_df[top10_pct.isna() | (top10_pct < max_top10)].copy()
+            if max_industry is not None and "持股行业集中度" in fund_df.columns:
+                industry_pct = fund_df["持股行业集中度"].apply(extract_percent)
+                fund_df = fund_df[industry_pct.isna() | (industry_pct < max_industry)].copy()
+            conditions = []
+            if max_top10 is not None:
+                conditions.append(f"前10大重仓股占比 < {max_top10}%")
+            if max_industry is not None:
+                conditions.append(f"持股行业集中度 < {max_industry}%")
+            print(f"{fund_type}基金: 按{'、'.join(conditions)}筛选，从 {before_count} 只保留 {len(fund_df)} 只")
+
+        # 有稳定性评分时按评分倒序输出，否则按近6月倒序
+        if "稳定性评分" in fund_df.columns:
+            return fund_df.sort_values(by='稳定性评分', ascending=False, na_position='last')
         return fund_df.sort_values(by='近6月', ascending=False)
     except Exception as e:
-        print(f"获取小微盘基金数据时出错: {e}")
+        print(f"获取{fund_type}基金数据时出错: {e}")
         return pd.DataFrame()
 
 def highlight_top_50_all_columns(df):
@@ -330,8 +527,8 @@ def highlight_top_50_all_columns(df):
     # 创建一个样式DataFrame，默认为空字符串（无样式）
     styles = pd.DataFrame('', index=df.index, columns=df.columns)
 
-    # 定义收益率列（去掉近1周）
-    return_columns = ['近1月', '近3月', '近6月', '近1年', '今年来']
+    # 定义收益率列（去掉近1周；含"近2年"）
+    return_columns = SCREEN_PERIOD_COLUMNS
 
     # 记录每个基金在多少个收益率列中进入前10
     top_count = {idx: 0 for idx in df.index}
@@ -339,8 +536,11 @@ def highlight_top_50_all_columns(df):
     # 对每个收益率列，标记其前10名
     for col in return_columns:
         if col in df.columns:
-            # 获取该列排序后的前10个索引
-            top_10_idx = df[col].nlargest(10).index
+            # 获取该列排序后的前10个索引（空值/非数值自动跳过）
+            series = df[col]
+            if series.dtype == object:
+                series = pd.to_numeric(series, errors='coerce')
+            top_10_idx = series.nlargest(10).index
             # 将对应位置设置为黄色背景
             styles.loc[top_10_idx, col] = 'background-color: yellow'
             # 更新每个基金进入前10的次数
@@ -349,7 +549,7 @@ def highlight_top_50_all_columns(df):
 
     # 对至少有3列进入前10的基金，将基金简称设置为金黄色背景
     for idx, count in top_count.items():
-        if count >= 3:  # 至少有3列进入前10（共5个时间段）
+        if count >= 3:  # 至少有3列进入前10（共6个时间段）
             # 标注基金简称为金黄色
             styles.loc[idx, '基金简称'] = 'background-color: gold'
 
@@ -417,7 +617,7 @@ def _retry_call(func, max_retries=3, delay=2):
                 time.sleep(delay)
     raise last_exc
 
-def plot_excess_return_curves(fund_df, benchmark_code, fund_type, days=365):
+def plot_excess_return_curves(fund_df, benchmark_code, fund_type, days=None, period_label='近2年'):
     """
     为基金绘制超额收益曲线图（参考 analyze_funds.py 的实现）
     只绘制"金黄色背景"的基金（至少3个超额收益率列为正值）
@@ -430,8 +630,10 @@ def plot_excess_return_curves(fund_df, benchmark_code, fund_type, days=365):
         基准基金代码（如 "510300"）
     fund_type : str
         基金类型名称（用于图标题和文件名）
-    days : int
-        历史数据天数，默认365天
+    days : int, optional
+        历史数据天数；默认 None 表示按当前系统日期前推完整24个自然月（近2年）
+    period_label : str
+        周期展示文案，默认"近2年"
 
     返回
     ------
@@ -442,6 +644,18 @@ def plot_excess_return_curves(fund_df, benchmark_code, fund_type, days=365):
         if fund_df is None or fund_df.empty:
             print(f"{fund_type}基金: 无数据可绘制")
             return None
+
+        # 解析曲线展示区间：默认为当前系统日期往前完整24个自然月（近2年）
+        if days is None:
+            window_start, window_end = get_recent_two_year_window()
+            days = (window_end - window_start).days
+        else:
+            window_end = date.today()
+            window_start = window_end - timedelta(days=days)
+            period_label = f'近{days}天'
+        window_start_ts = pd.Timestamp(window_start)
+        print(f"{fund_type}基金: 超额收益曲线展示区间 {period_label}："
+              f"{window_start.strftime('%Y-%m-%d')} ~ {window_end.strftime('%Y-%m-%d')}（{days}天）")
 
         # 排除基准基金本身，避免在走势图和表格中显示
         if '基金代码' in fund_df.columns:
@@ -511,6 +725,12 @@ def plot_excess_return_curves(fund_df, benchmark_code, fund_type, days=365):
             # 将字符串日期转为 datetime 对象，确保 matplotlib 正确渲染 X 轴
             dates = [pd.to_datetime(item['date']) for item in curve_data]
             excess_values = [item['excess_return'] * 100 for item in curve_data]  # 转为百分比
+            # 严格裁剪：只保留日期落在展示区间（近24个月）内的数据点
+            in_window = [i for i, d in enumerate(dates) if d >= window_start_ts]
+            dates = [dates[i] for i in in_window]
+            excess_values = [excess_values[i] for i in in_window]
+            if not dates:
+                return None
             return (name, dates, excess_values)
 
         with ThreadPoolExecutor(max_workers=10) as executor:
@@ -589,7 +809,11 @@ def plot_excess_return_curves(fund_df, benchmark_code, fund_type, days=365):
                 annotation_clip=True
             )
 
-        ax.set_title(f'{fund_type}基金超额收益曲线（基准：{display_label}，近{days}天）', fontsize=14)
+        ax.set_title(
+            f'{fund_type}基金超额收益曲线（基准：{display_label}，{period_label}：'
+            f'{window_start.strftime("%Y-%m-%d")} 至 {window_end.strftime("%Y-%m-%d")}）',
+            fontsize=14
+        )
         ax.set_xlabel('日期', fontsize=12)
         ax.set_ylabel('超额收益率 (%)', fontsize=12)
         ax.grid(True, alpha=0.3)
@@ -627,6 +851,9 @@ def plot_excess_return_curves(fund_df, benchmark_code, fund_type, days=365):
         chart_data = {
             'fund_type': fund_type,
             'benchmark': display_label,
+            'period': period_label,
+            'start_date': window_start.strftime('%Y-%m-%d'),
+            'end_date': window_end.strftime('%Y-%m-%d'),
             'series': [
                 {
                     'name': c[0],
@@ -657,13 +884,13 @@ def calculate_excess_returns(writer, selected_fund_types=None):
     try:
         # 定义基金类型与基准基金代码的映射关系
         benchmark_map = {
-            "沪深300": "510300",
-            "中证500": "014306",
+            "沪深300": "016690",
+            "中证500": "009609",
             "A500":"022757",
             "中证800": "515810",
-            "中证1000": "018014",
+            "中证1000": "017645",
             "中证2000": "563300",
-            "国证2000": "017548"
+            "国证2000": "019319"
         }
         # 如果指定了基金类型，则只处理指定的
         if selected_fund_types is not None:
@@ -750,9 +977,13 @@ def calculate_excess_returns(writer, selected_fund_types=None):
                     fund_df[col] = pd.to_numeric(fund_df[col].astype(str).str.rstrip('%'), errors='coerce') / 100
                     # 几何超额收益率 = (1 + 基金收益) / (1 + 基准收益) - 1
                     fund_df[excess_col] = ((1 + fund_df[col]) / (1 + benchmark_returns[col]) - 1) * 100
-            
+            # 超额收益率列统一保留两位小数，确保Excel展示一致
+            excess_cols = [c for c in fund_df.columns if c.endswith('超额')]
+            if excess_cols:
+                fund_df[excess_cols] = fund_df[excess_cols].round(2)
+
             # 只保留指定的列
-            columns_to_keep = ["基金代码", "基金简称", "日期", "近1周超额", "近1月超额", "近3月超额", "近6月超额", 
+            columns_to_keep = ["基金代码", "基金简称", "日期", "近1周超额", "近1月超额", "近3月超额", "近6月超额",
                               "近1年超额", "近2年超额", "近3年超额", "今年来超额", "成立时间", "最新规模", "市值评分", "换手率",
                                "前10大重仓股占比", "持股行业集中度"]
             # 检查哪些列实际存在于DataFrame中
@@ -770,69 +1001,80 @@ def calculate_excess_returns(writer, selected_fund_types=None):
             # 绘制超额收益曲线图（参考 analyze_funds.py）
             plot_excess_return_curves(fund_df, benchmark_code, fund_type)
 
-        # 根据配置决定是否处理小微盘基金超额收益率
-        include_small_in_excess = selected_fund_types is None or "小微盘" in selected_fund_types
-        if include_small_in_excess:
+        # 处理市值评分筛选类基金（小微盘、大盘主动等）的超额收益率
+        for special_type, benchmark_code in SPECIAL_FUND_BENCHMARKS.items():
+            # 根据配置决定是否处理该基金类型
+            if selected_fund_types is not None and special_type not in selected_fund_types:
+                continue
             try:
-                small_fund_df = pd.read_excel('index-fund.xlsx', sheet_name='小微盘')
-                if small_fund_df.empty:
-                    pass
-                else:
-                    # 小微盘基金使用320016作为基准
-                    benchmark_code = "320016"
-                    benchmark_df = fund_open_fund_rank_em_df[fund_open_fund_rank_em_df["基金代码"] == benchmark_code]
-                    
-                    if not benchmark_df.empty:
-                        # 获取基准收益率
-                        benchmark_returns = {}
-                        for col in return_columns:
-                            if col in benchmark_df.columns:
-                                # 处理数值数据，确保正确转换
-                                value = benchmark_df[col].iloc[0]
-                                if pd.isna(value):
-                                    benchmark_returns[col] = 0
-                                else:
-                                    # 如果是字符串，去除%符号并转换为数值
-                                    if isinstance(value, str):
-                                        benchmark_returns[col] = pd.to_numeric(value.rstrip('%'), errors='coerce') / 100
-                                    else:
-                                        # 如果已经是数值类型，直接使用
-                                        benchmark_returns[col] = pd.to_numeric(value, errors='coerce') / 100
-                            else:
-                                benchmark_returns[col] = 0
-                        
-                        # 计算超额收益率（几何计算法，与走势图保持一致）
-                        for col in return_columns:
-                            if col in small_fund_df.columns:
-                                # 创建超额收益率列名
-                                excess_col = f'{col}超额'
-                                # 将原始收益率转换为数值
-                                small_fund_df[col] = pd.to_numeric(small_fund_df[col].astype(str).str.rstrip('%'), errors='coerce') / 100
-                                # 几何超额收益率 = (1 + 基金收益) / (1 + 基准收益) - 1
-                                small_fund_df[excess_col] = ((1 + small_fund_df[col]) / (1 + benchmark_returns[col]) - 1) * 100
-                        
-                        # 只保留指定的列
-                        columns_to_keep = ["基金代码", "基金简称", "日期", "近1周超额", "近1月超额", "近3月超额", "近6月超额", 
-                                          "近1年超额", "近2年超额", "近3年超额", "今年来超额", "成立时间", "最新规模", "市值评分", "换手率",
-                                           "前10大重仓股占比", "持股行业集中度"]
-                        # 检查哪些列实际存在于DataFrame中
-                        existing_columns = [col for col in columns_to_keep if col in small_fund_df.columns]
-                        small_fund_df = small_fund_df[existing_columns]
-                        
-                        # 确保基金代码为6位，不足的向前填充0
-                        if "基金代码" in small_fund_df.columns:
-                            small_fund_df["基金代码"] = small_fund_df["基金代码"].astype(str).str.zfill(6)
-                        
-                        # 保存带有超额收益率的数据，并应用样式
-                        styled_df = small_fund_df.style.apply(highlight_excess_returns, axis=None)
-                        styled_df.to_excel(writer, sheet_name='小微盘_超额', index=False)
+                special_fund_df = pd.read_excel('index-fund.xlsx', sheet_name=special_type)
+                if special_fund_df.empty:
+                    continue
 
-                        # 绘制超额收益曲线图（参考 analyze_funds.py）
-                        plot_excess_return_curves(small_fund_df, benchmark_code, '小微盘')
-                    else:
-                        print(f"未找到小微盘基金的基准基金{benchmark_code}")
+                # 查找基准基金数据：按场内ETF -> 指数型 -> 股票型 -> 混合型 顺序查找
+                benchmark_df = fund_exchange_rank_em_df[fund_exchange_rank_em_df["基金代码"] == benchmark_code]
+                if benchmark_df.empty:
+                    benchmark_df = fund_open_fund_rank_index_df[fund_open_fund_rank_index_df["基金代码"] == benchmark_code]
+                if benchmark_df.empty:
+                    benchmark_df = fund_open_fund_rank_stock_df[fund_open_fund_rank_stock_df["基金代码"] == benchmark_code]
+                if benchmark_df.empty:
+                    benchmark_df = fund_open_fund_rank_em_df[fund_open_fund_rank_em_df["基金代码"] == benchmark_code]
+
+                if not benchmark_df.empty:
+                    # 获取基准收益率
+                    benchmark_returns = {}
+                    for col in return_columns:
+                        if col in benchmark_df.columns:
+                            # 处理数值数据，确保正确转换
+                            value = benchmark_df[col].iloc[0]
+                            if pd.isna(value):
+                                benchmark_returns[col] = 0
+                            else:
+                                # 如果是字符串，去除%符号并转换为数值
+                                if isinstance(value, str):
+                                    benchmark_returns[col] = pd.to_numeric(value.rstrip('%'), errors='coerce') / 100
+                                else:
+                                    # 如果已经是数值类型，直接使用
+                                    benchmark_returns[col] = pd.to_numeric(value, errors='coerce') / 100
+                        else:
+                            benchmark_returns[col] = 0
+                    
+                    # 计算超额收益率（几何计算法，与走势图保持一致）
+                    for col in return_columns:
+                        if col in special_fund_df.columns:
+                            # 创建超额收益率列名
+                            excess_col = f'{col}超额'
+                            # 将原始收益率转换为数值
+                            special_fund_df[col] = pd.to_numeric(special_fund_df[col].astype(str).str.rstrip('%'), errors='coerce') / 100
+                            # 几何超额收益率 = (1 + 基金收益) / (1 + 基准收益) - 1
+                            special_fund_df[excess_col] = ((1 + special_fund_df[col]) / (1 + benchmark_returns[col]) - 1) * 100
+                    # 超额收益率列统一保留两位小数，确保Excel展示一致
+                    excess_cols = [c for c in special_fund_df.columns if c.endswith('超额')]
+                    if excess_cols:
+                        special_fund_df[excess_cols] = special_fund_df[excess_cols].round(2)
+
+                    # 只保留指定的列
+                    columns_to_keep = ["基金代码", "基金简称", "日期", "近1周超额", "近1月超额", "近3月超额", "近6月超额",
+                                      "近1年超额", "近2年超额", "近3年超额", "今年来超额", "成立时间", "最新规模", "市值评分", "稳定性评分", "换手率",
+                                       "前10大重仓股占比", "持股行业集中度"]
+                    # 检查哪些列实际存在于DataFrame中
+                    existing_columns = [col for col in columns_to_keep if col in special_fund_df.columns]
+                    special_fund_df = special_fund_df[existing_columns]
+                    
+                    # 确保基金代码为6位，不足的向前填充0
+                    if "基金代码" in special_fund_df.columns:
+                        special_fund_df["基金代码"] = special_fund_df["基金代码"].astype(str).str.zfill(6)
+                    
+                    # 保存带有超额收益率的数据，并应用样式
+                    styled_df = special_fund_df.style.apply(highlight_excess_returns, axis=None)
+                    styled_df.to_excel(writer, sheet_name=f'{special_type}_超额', index=False)
+
+                    # 绘制超额收益曲线图（参考 analyze_funds.py）
+                    plot_excess_return_curves(special_fund_df, benchmark_code, special_type)
+                else:
+                    print(f"未找到{special_type}基金的基准基金{benchmark_code}")
             except Exception as e:
-                print(f"处理小微盘基金超额收益率时出错: {e}")
+                print(f"处理{special_type}基金超额收益率时出错: {e}")
     except Exception as e:
         print(f"计算超额收益率时出错: {e}")
 
@@ -857,6 +1099,19 @@ def adjust_column_width(filename):
     
     workbook.save(filename)
 
+def wait_file_available(filename, retry_interval=10):
+    """等待文件可写。Windows 下文件被 Excel 打开时会加写锁，写入会抛 PermissionError，
+    这里尝试以追加方式打开来检测占用，被占用则提示并等待，直到文件释放。"""
+    while True:
+        try:
+            if os.path.exists(filename):
+                with open(filename, 'ab'):
+                    pass
+            return
+        except PermissionError:
+            print(f"文件 {filename} 正被占用（可能已被 Excel 打开），请关闭 Excel，{retry_interval} 秒后自动重试...")
+            time.sleep(retry_interval)
+
 def update_fund_data():
     """更新基金数据的函数"""
     print(f"开始更新基金数据: {time.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -868,31 +1123,33 @@ def update_fund_data():
         has_data = False
 
         # 自定义需要输出的基金类型，注释掉的不参与分析
-        # 可选: "沪深300", "中证500", "A500", "中证800", "中证1000", "中证2000", "国证2000", "小微盘"
+        # 可选: "沪深300", "中证500", "A500", "中证800", "中证1000", "中证2000", "国证2000", "小微盘", "大盘主动"
         global SELECTED_FUND_TYPES
-        SELECTED_FUND_TYPES = ["A500", "中证500", "中证1000", "国证2000"]
+        SELECTED_FUND_TYPES = ["沪深300", "A500", "中证500", "中证1000", "国证2000", "小微盘", "大盘主动"]
         
-        ALL_FUND_TYPES = ["沪深300", "中证500", "A500", "中证800", "中证1000", "中证2000", "国证2000", "小微盘"]
-        fund_types = [t for t in SELECTED_FUND_TYPES if t in ALL_FUND_TYPES and t != "小微盘"]
-        include_small_fund = "小微盘" in SELECTED_FUND_TYPES
+        ALL_FUND_TYPES = ["沪深300", "中证500", "A500", "中证800", "中证1000", "中证2000", "国证2000"] + list(SPECIAL_MARKET_CAP_FILTERS.keys())
+        # 指数基金类型与市值评分筛选类基金类型（小微盘、大盘主动等）分开处理
+        fund_types = [t for t in SELECTED_FUND_TYPES if t in ALL_FUND_TYPES and t not in SPECIAL_MARKET_CAP_FILTERS]
+        special_fund_types = [t for t in SELECTED_FUND_TYPES if t in SPECIAL_MARKET_CAP_FILTERS]
         all_fund_codes = []
         
-        fund_type_names = "、".join(fund_types)
-        if include_small_fund:
-            fund_type_names += "、小微盘"
-        print(f"开始并行处理 {len(fund_types)} 种指数基金{'和小微盘基金' if include_small_fund else ''}: {fund_type_names}...")
+        fund_type_names = "、".join(fund_types + special_fund_types)
+        print(f"开始并行处理 {len(fund_types) + len(special_fund_types)} 种基金: {fund_type_names}...")
         
         def process_fund_type(fund_type):
             """处理单个基金类型的函数"""
             return fund_type, fetch_fund_data(fund_type)
         
-        with ThreadPoolExecutor(max_workers=len(fund_types) + (1 if include_small_fund else 0)) as executor:
+        with ThreadPoolExecutor(max_workers=len(fund_types) + len(special_fund_types)) as executor:
             # 提交所有指数基金任务
             futures = {executor.submit(process_fund_type, ft): ft for ft in fund_types}
-            # 根据配置决定是否提交小微盘基金任务
-            small_future = None
-            if include_small_fund:
-                small_future = executor.submit(fetch_small_fund_data)
+            # 提交市值评分筛选类基金任务（小微盘、大盘主动等）
+            special_futures = {}
+            for sf_type in special_fund_types:
+                sf_threshold, sf_mode = SPECIAL_MARKET_CAP_FILTERS[sf_type]
+                sf_max_scale = SPECIAL_FUND_MAX_SCALE.get(sf_type)
+                sf_extra_filters = SPECIAL_FUND_EXTRA_FILTERS.get(sf_type)
+                special_futures[executor.submit(fetch_market_cap_fund_data, sf_type, sf_threshold, sf_mode, sf_max_scale, sf_extra_filters)] = sf_type
             
             # 处理指数基金结果
             for future in as_completed(futures):
@@ -906,16 +1163,16 @@ def update_fund_data():
                 except Exception as e:
                     print(f"处理{fund_type}基金时出错: {e}")
             
-            # 处理小微盘基金结果
-            if include_small_fund and small_future is not None:
+            # 处理市值评分筛选类基金结果
+            for future, sf_type in special_futures.items():
                 try:
-                    small_fund_df = small_future.result()
-                    if small_fund_df is not None and not small_fund_df.empty:
-                        temp_data['小微盘'] = small_fund_df
-                        all_fund_codes.extend(small_fund_df['基金代码'].tolist())
+                    sf_df = future.result()
+                    if sf_df is not None and not sf_df.empty:
+                        temp_data[sf_type] = sf_df
+                        all_fund_codes.extend(sf_df['基金代码'].tolist())
                         has_data = True
                 except Exception as e:
-                    print(f"处理小微盘基金时出错: {e}")
+                    print(f"处理{sf_type}基金时出错: {e}")
         
         # 收集所有需要市值评分的基金代码
         if all_fund_codes:
@@ -954,9 +1211,15 @@ def update_fund_data():
                     if "市值评分" in cols:
                         cols.remove("市值评分")
                         cols.insert(latest_scale_idx + 1, "市值评分")
-                        temp_data[sheet_name] = fund_df[cols]
+                    # 稳定性评分紧跟市值评分之后（仅市值评分筛选类基金有此列）
+                    if "稳定性评分" in cols:
+                        cols.remove("稳定性评分")
+                        market_cap_idx = cols.index("市值评分")
+                        cols.insert(market_cap_idx + 1, "稳定性评分")
+                    temp_data[sheet_name] = fund_df[cols]
         
-        # 现在保存到Excel
+        # 现在保存到Excel（先确保文件未被 Excel 占用）
+        wait_file_available(filename)
         with pd.ExcelWriter(filename, engine='openpyxl') as writer:
             for sheet_name, fund_df in temp_data.items():
                 save_to_excel(writer, fund_df, sheet_name)

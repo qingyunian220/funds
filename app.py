@@ -97,6 +97,19 @@ def get_fund_data():
     if not os.path.exists(EXCEL_FILE):
         return jsonify({'code': 1, 'msg': 'Excel文件不存在', 'count': 0, 'data': []})
 
+    # 工作表不存在（如大盘主动等尚未生成数据的类型）时返回干净的空数据，
+    # 避免 pd.read_excel 抛出 "Worksheet not found" 被当作错误透传给前端
+    try:
+        if sheet not in pd.ExcelFile(EXCEL_FILE).sheet_names:
+            response_data = {'code': 0, 'msg': '暂无数据', 'count': 0, 'data': []}
+            return app.response_class(
+                response=json.dumps(response_data, ensure_ascii=False),
+                status=200,
+                mimetype='application/json'
+            )
+    except Exception:
+        pass
+
     try:
         df = pd.read_excel(EXCEL_FILE, sheet_name=sheet)
         df = df.replace({np.nan: None})
