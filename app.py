@@ -464,7 +464,12 @@ def export_fund_ranking_pdf():
 
             page.route('**/fund_ranking*', intercept_route)
             page.goto(url, wait_until='networkidle')
-            page.wait_for_selector('canvas', timeout=30000)
+            # 等待图表 canvas 渲染完成；已改用本地 echarts，正常很快出图。
+            # 此处超时仅作兜底，不阻断导出（避免图表偶发未渲染时整个导出报错）。
+            try:
+                page.wait_for_selector('canvas', timeout=15000)
+            except Exception as e:
+                print(f"等待图表 canvas 超时，继续导出: {e}")
             page.wait_for_timeout(2000)
 
             # 强制 ECharts 重新读取容器尺寸并重绘（确保 canvas 像素尺寸匹配容器）
